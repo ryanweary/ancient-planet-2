@@ -66,6 +66,9 @@ function pad(t, ringCol, opts = {}) {
     const p = M(rbox(0.3, 0.13, 0.1, 0.025), A, Math.sin(a) * 0.43, 0.115, Math.cos(a) * 0.43, -0.25, a, 0); g.add(p);
     const l = M(rbox(0.07, 0.035, 0.06, 0.01), MAT.greenLight, Math.sin(a + Math.PI / 4) * 0.44, 0.17, Math.cos(a + Math.PI / 4) * 0.44, 0, a + Math.PI / 4, 0); l.castShadow = false; g.add(l);
   }
+  // bevelled detail: bolts, side vents with light strips
+  for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + Math.PI / 8; const bo = M(cyl(0.022, 0.022, 0.03, 6), MAT.metal, Math.sin(a) * 0.34, 0.205, Math.cos(a) * 0.34); bo.castShadow = false; g.add(bo); }
+  for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; const v = M(rbox(0.16, 0.07, 0.05, 0.015), MAT.black, Math.sin(a) * 0.47, 0.07, Math.cos(a) * 0.47, 0, a, 0); g.add(v); const st = M(rbox(0.12, 0.016, 0.02, 0.005), glow(c, 1.4), Math.sin(a) * 0.49, 0.08, Math.cos(a) * 0.49, 0, a, 0); st.castShadow = false; g.add(st); }
   // coloured ring that grows with level
   const ringW = 0.025 + t.lvl * 0.008;
   const ring = M(tor(0.3, ringW, 6, 32), glow(c, 0.35 + t.lvl * 0.15), 0, 0.195, 0, Math.PI / 2); g.add(ring);

@@ -20,14 +20,14 @@ const X0 = -GW / 2 - MX, Z0 = -GH / 2 - MN, EW = GW + 2 * MX, EH = GH + MN + MS;
 const PATH_D = -0.2, WATER_Y = -0.27, WATER_D = -0.5;
 
 export const BIOMES = {
-  verdant: { slab: 0, det: 0.55, top: 'rocky_terrain_02', topT: 0xc8f080, patch: 'dry_ground_01', patchT: 0xd8c8a0, pathT: 0xb89a70, cliff: 'aerial_rocks_02', cliffT: 0xb8a890, sky: 0x9fd7ff, fog: 0xb0dcf0, sun: 0xfff0d8, sunI: 2.7, hs: 0xd0e8ff, hg: 0x5a6a30, hI: 0.9, water: 0x38d8e8, haz: null, deco: ['rock', 'pine', 'pine', 'ruin'], obst: ['rock', 'rock', 'ruin'], tuft: 'verdant', tuftT: 0xffffff, amb: 'fireflies', crystalCol: 0x4ff0ff, rockT: 0xa89a88, leaf: 0x2f6a26, trunk: 0x5a3a22, grade: [1.2, 1.06, [1.03, 1.02, 0.96]] },
-  reef: { slab: 0, det: 0.6, top: 'coast_sand_01', topT: 0xfff0d8, patch: 'leafy_grass', patchT: 0xb8e090, pathT: 0xf0dcb8, cliff: 'rock_face', cliffT: 0xe0c8a8, sky: 0xbff0ff, fog: 0xc0eef4, sun: 0xfff6e8, sunI: 2.8, hs: 0xd8f4ff, hg: 0x8a7a50, hI: 1.0, water: 0x18d8d0, haz: null, deco: ['coral', 'rock', 'crystal', 'pine'], obst: ['coral', 'rock'], tuft: 'reef', tuftT: 0xffffff, amb: 'dust', crystalCol: 0xff70d0, rockT: 0xd0b8a0, leaf: 0x3a8a40, trunk: 0x7a5a3a, grade: [1.15, 1.04, [1.0, 1.02, 1.02]] },
-  frost: { slab: 0, det: 0.6, top: 'snow_02', topT: 0xf4f8ff, patch: 'aerial_rocks_02', patchT: 0xc0d0e8, pathT: 0xc8d4e4, cliff: 'rock_face', cliffT: 0x9aa8c0, sky: 0xd8ecff, fog: 0xd0e4f6, sun: 0xfff6ee, sunI: 2.4, hs: 0xe0f0ff, hg: 0x6a7a90, hI: 1.05, water: 0x7ac8f0, haz: null, deco: ['pine', 'ice', 'rock', 'pine'], obst: ['ice', 'rock'], tuft: 'frost', tuftT: 0xffffff, amb: 'snow', crystalCol: 0x9fe8ff, rockT: 0x9aa4b4, leaf: 0x34584e, trunk: 0x4a3a30, grade: [1.05, 1.05, [0.97, 1.0, 1.05]] },
-  mire: { slab: 0, det: 0.55, top: 'brown_mud_leaves_01', topT: 0xa8c080, patch: 'forest_ground_04', patchT: 0x9a8a6a, pathT: 0x8a7a5a, cliff: 'aerial_rocks_02', cliffT: 0x80907a, sky: 0x5a7a60, fog: 0x587860, sun: 0xe8f8d0, sunI: 2.1, hs: 0xb8d8c0, hg: 0x3a4a2a, hI: 0.9, water: 0x4aa070, haz: null, deco: ['fungus', 'pine', 'rock', 'fungus'], obst: ['fungus', 'rock'], tuft: 'mire', tuftT: 0xffffff, amb: 'fireflies', crystalCol: 0x60ffb0, rockT: 0x7a806a, leaf: 0x1e4a2a, trunk: 0x3a3022, grade: [1.1, 1.08, [0.97, 1.03, 0.98]] },
-  forge: { slab: 0, det: 0.65, top: 'burned_ground_01', topT: 0xb09080, patch: 'dry_ground_01', patchT: 0x906050, pathT: 0x8a6a58, cliff: 'rock_face', cliffT: 0x6a5850, sky: 0x4a2a20, fog: 0x3a2018, sun: 0xffd0a0, sunI: 2.4, hs: 0xffc8a0, hg: 0x3a2018, hI: 0.8, water: null, haz: 'lava', deco: ['basalt', 'rock', 'basalt'], obst: ['basalt', 'rock'], tuft: 'forge', tuftT: 0xffffff, amb: 'embers', crystalCol: 0xffa040, rockT: 0x5a4a44, leaf: 0x3a2a20, trunk: 0x2a2018, grade: [1.15, 1.1, [1.06, 0.98, 0.92]] },
-  sky: { slab: 1, det: 0.6, top: 'leafy_grass', topT: 0xd8f0a0, patch: 'coast_sand_01', patchT: 0xf0e0c0, pathT: 0xf0eadc, cliff: 'rock_face', cliffT: 0xd8c8b0, sky: 0xbfe4ff, fog: 0xdcefff, sun: 0xfff6e0, sunI: 2.8, hs: 0xe0f0ff, hg: 0x8a8a70, hI: 1.05, water: null, haz: 'void', deco: ['column', 'ruin', 'rock', 'pine'], obst: ['column', 'ruin', 'rock'], tuft: 'sky', tuftT: 0xffffff, amb: 'dust', crystalCol: 0x7fd8ff, rockT: 0xc8b8a4, leaf: 0x4a8a36, trunk: 0x6a4a2a, grade: [1.12, 1.03, [1.02, 1.02, 1.0]] },
-  storm: { slab: 1, det: 0.6, top: 'dry_ground_01', topT: 0x9a94b0, patch: 'aerial_rocks_02', patchT: 0x8a88a8, pathT: 0xa8a4b8, cliff: 'rock_face', cliffT: 0x6a6684, sky: 0x4a4668, fog: 0x4a4668, sun: 0xe8e0ff, sunI: 2.2, hs: 0xc8c0ff, hg: 0x3a3450, hI: 0.95, water: 0x5070b8, haz: null, deco: ['shard', 'rock', 'rock', 'shard'], obst: ['shard', 'rock'], tuft: 'storm', tuftT: 0xffffff, amb: 'sparks', crystalCol: 0xc080ff, rockT: 0x6a6880, leaf: 0x3a4a40, trunk: 0x2a2a30, grade: [1.1, 1.08, [0.98, 0.97, 1.06]] },
-  city: { slab: 1, det: 0.7, top: 'concrete_floor_worn_001', topT: 0xa8b0c0, patch: 'metal_plate', patchT: 0x98a8b8, pathT: 0x8a90a0, cliff: 'rock_face', cliffT: 0x707888, sky: 0x2a3048, fog: 0x2a3048, sun: 0xe0ecff, sunI: 2.3, hs: 0xc0d0ff, hg: 0x303848, hI: 1.0, water: 0x2aa8c8, haz: null, deco: ['tower', 'rock', 'tower'], obst: ['tower', 'rock'], tuft: 'city', tuftT: 0xffffff, amb: 'dust', crystalCol: 0x40f0ff, rockT: 0x707884, leaf: 0x2a3a30, trunk: 0x2a2a2a, grade: [1.08, 1.08, [0.97, 1.0, 1.06]] },
+  verdant: { slab: 0, det: 0.30, top: 'rocky_terrain_02', topT: 0xc8f080, patch: 'dry_ground_01', patchT: 0xd8c8a0, pathT: 0xb89a70, cliff: 'aerial_rocks_02', cliffT: 0xb8a890, sky: 0x9fd7ff, fog: 0xb0dcf0, sun: 0xfff0d8, sunI: 2.7, hs: 0xd0e8ff, hg: 0x5a6a30, hI: 0.9, water: 0x38d8e8, haz: null, deco: ['rock', 'pine', 'pine', 'ruin'], obst: ['rock', 'rock', 'ruin'], tuft: 'verdant', tuftT: 0xffffff, amb: 'fireflies', crystalCol: 0x4ff0ff, rockT: 0xa89a88, leaf: 0x2f6a26, trunk: 0x5a3a22, grade: [1.2, 1.06, [1.03, 1.02, 0.96]] },
+  reef: { slab: 0, det: 0.35, top: 'coast_sand_01', topT: 0xfff0d8, patch: 'leafy_grass', patchT: 0xb8e090, pathT: 0xf0dcb8, cliff: 'rock_face', cliffT: 0xe0c8a8, sky: 0xbff0ff, fog: 0xc0eef4, sun: 0xfff6e8, sunI: 2.8, hs: 0xd8f4ff, hg: 0x8a7a50, hI: 1.0, water: 0x18d8d0, haz: null, deco: ['coral', 'rock', 'crystal', 'pine'], obst: ['coral', 'rock'], tuft: 'reef', tuftT: 0xffffff, amb: 'dust', crystalCol: 0xff70d0, rockT: 0xd0b8a0, leaf: 0x3a8a40, trunk: 0x7a5a3a, grade: [1.15, 1.04, [1.0, 1.02, 1.02]] },
+  frost: { slab: 0, det: 0.35, top: 'snow_02', topT: 0xf4f8ff, patch: 'aerial_rocks_02', patchT: 0xc0d0e8, pathT: 0xc8d4e4, cliff: 'rock_face', cliffT: 0x9aa8c0, sky: 0xd8ecff, fog: 0xd0e4f6, sun: 0xfff6ee, sunI: 2.4, hs: 0xe0f0ff, hg: 0x6a7a90, hI: 1.05, water: 0x7ac8f0, haz: null, deco: ['pine', 'ice', 'rock', 'pine'], obst: ['ice', 'rock'], tuft: 'frost', tuftT: 0xffffff, amb: 'snow', crystalCol: 0x9fe8ff, rockT: 0x9aa4b4, leaf: 0x34584e, trunk: 0x4a3a30, grade: [1.05, 1.05, [0.97, 1.0, 1.05]] },
+  mire: { slab: 0, det: 0.30, top: 'brown_mud_leaves_01', topT: 0xa8c080, patch: 'forest_ground_04', patchT: 0x9a8a6a, pathT: 0x8a7a5a, cliff: 'aerial_rocks_02', cliffT: 0x80907a, sky: 0x5a7a60, fog: 0x587860, sun: 0xe8f8d0, sunI: 2.1, hs: 0xb8d8c0, hg: 0x3a4a2a, hI: 0.9, water: 0x4aa070, haz: null, deco: ['fungus', 'pine', 'rock', 'fungus'], obst: ['fungus', 'rock'], tuft: 'mire', tuftT: 0xffffff, amb: 'fireflies', crystalCol: 0x60ffb0, rockT: 0x7a806a, leaf: 0x1e4a2a, trunk: 0x3a3022, grade: [1.1, 1.08, [0.97, 1.03, 0.98]] },
+  forge: { slab: 0, det: 0.40, top: 'burned_ground_01', topT: 0xb09080, patch: 'dry_ground_01', patchT: 0x906050, pathT: 0x8a6a58, cliff: 'rock_face', cliffT: 0x6a5850, sky: 0x4a2a20, fog: 0x3a2018, sun: 0xffd0a0, sunI: 2.4, hs: 0xffc8a0, hg: 0x3a2018, hI: 0.8, water: null, haz: 'lava', deco: ['basalt', 'rock', 'basalt'], obst: ['basalt', 'rock'], tuft: 'forge', tuftT: 0xffffff, amb: 'embers', crystalCol: 0xffa040, rockT: 0x5a4a44, leaf: 0x3a2a20, trunk: 0x2a2018, grade: [1.15, 1.1, [1.06, 0.98, 0.92]] },
+  sky: { slab: 1, det: 0.35, top: 'leafy_grass', topT: 0xd8f0a0, patch: 'coast_sand_01', patchT: 0xf0e0c0, pathT: 0xf0eadc, cliff: 'rock_face', cliffT: 0xd8c8b0, sky: 0xbfe4ff, fog: 0xdcefff, sun: 0xfff6e0, sunI: 2.8, hs: 0xe0f0ff, hg: 0x8a8a70, hI: 1.05, water: null, haz: 'void', deco: ['column', 'ruin', 'rock', 'pine'], obst: ['column', 'ruin', 'rock'], tuft: 'sky', tuftT: 0xffffff, amb: 'dust', crystalCol: 0x7fd8ff, rockT: 0xc8b8a4, leaf: 0x4a8a36, trunk: 0x6a4a2a, grade: [1.12, 1.03, [1.02, 1.02, 1.0]] },
+  storm: { slab: 1, det: 0.35, top: 'dry_ground_01', topT: 0x9a94b0, patch: 'aerial_rocks_02', patchT: 0x8a88a8, pathT: 0xa8a4b8, cliff: 'rock_face', cliffT: 0x6a6684, sky: 0x4a4668, fog: 0x4a4668, sun: 0xe8e0ff, sunI: 2.2, hs: 0xc8c0ff, hg: 0x3a3450, hI: 0.95, water: 0x5070b8, haz: null, deco: ['shard', 'rock', 'rock', 'shard'], obst: ['shard', 'rock'], tuft: 'storm', tuftT: 0xffffff, amb: 'sparks', crystalCol: 0xc080ff, rockT: 0x6a6880, leaf: 0x3a4a40, trunk: 0x2a2a30, grade: [1.1, 1.08, [0.98, 0.97, 1.06]] },
+  city: { slab: 1, det: 0.45, top: 'concrete_floor_worn_001', topT: 0xa8b0c0, patch: 'metal_plate', patchT: 0x98a8b8, pathT: 0x8a90a0, cliff: 'rock_face', cliffT: 0x707888, sky: 0x2a3048, fog: 0x2a3048, sun: 0xe0ecff, sunI: 2.3, hs: 0xc0d0ff, hg: 0x303848, hI: 1.0, water: 0x2aa8c8, haz: null, deco: ['tower', 'rock', 'tower'], obst: ['tower', 'rock'], tuft: 'city', tuftT: 0xffffff, amb: 'dust', crystalCol: 0x40f0ff, rockT: 0x707884, leaf: 0x2a3a30, trunk: 0x2a2a2a, grade: [1.08, 1.08, [0.97, 1.0, 1.06]] },
 };
 
 const GradeShader = {
@@ -75,7 +75,7 @@ export class Renderer {
     this.grade = new ShaderPass(GradeShader); this.composer.addPass(this.grade);
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x4a3a20, 1.0); this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff0d0, 2.6); this.sun.position.set(-5, 13, 7); this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048); const sc = this.sun.shadow.camera; sc.left = -7.5; sc.right = 7.5; sc.top = 11; sc.bottom = -11; sc.near = 1; sc.far = 40; this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.02;
+    this.sun.shadow.mapSize.set(2048, 2048); const sc = this.sun.shadow.camera; sc.left = -9; sc.right = 9; sc.top = 12; sc.bottom = -12; sc.near = 1; sc.far = 40; this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.02;
     this.scene.add(this.sun); this.scene.add(this.sun.target);
     this.level = new THREE.Group(); this.scene.add(this.level);
     this.dyn = new THREE.Group(); this.scene.add(this.dyn);
@@ -129,29 +129,34 @@ export class Renderer {
     this.w = w; this.h = h;
     if (this.inBattle) this.fit(); else if (this.menu) this.menuCam();
   }
+  // 3/4 camera: ~48 deg pitch, close zoom (about 6.8 tiles across in portrait); pan clamps to the board
   fit() {
-    const pitch = 56 * Math.PI / 180;
-    const insTop = 50, insBot = 60;
-    const corners = [[-GW / 2, 0, -GH / 2 - 0.3], [GW / 2, 0, -GH / 2 - 0.3], [-GW / 2, 0, GH / 2], [GW / 2, 0, GH / 2], [0, 1.9, -GH / 2 + 0.6]];
-    const v = new THREE.Vector3();
-    let lo, hi, zc = 0;
-    for (let iter = 0; iter < 3; iter++) {
-      lo = 5; hi = 90;
-      for (let k = 0; k < 30; k++) {
-        const d = (lo + hi) / 2;
-        this.camera.position.set(0, Math.sin(pitch) * d, zc + Math.cos(pitch) * d); this.camera.lookAt(0, 0, zc); this.camera.updateMatrixWorld();
-        let ok = true;
-        for (const c of corners) { v.set(...c).project(this.camera); const sx = (v.x + 1) / 2 * this.w, sy = (1 - v.y) / 2 * this.h; if (sx < -1 || sx > this.w + 1 || sy < insTop || sy > this.h - insBot) ok = false; }
-        if (ok) hi = d; else lo = d;
-      }
-      const d = hi;
-      this.camera.position.set(0, Math.sin(pitch) * d, zc + Math.cos(pitch) * d); this.camera.lookAt(0, 0, zc); this.camera.updateMatrixWorld();
-      let minY = 1e9, maxY = -1e9; for (const c of corners) { v.set(...c).project(this.camera); const sy = (1 - v.y) / 2 * this.h; minY = Math.min(minY, sy); maxY = Math.max(maxY, sy); }
-      zc += ((minY + maxY) / 2 - (insTop + this.h - insBot) / 2) / this.h * GH * 0.9;
-    }
-    this.camDist = hi; this.camBase = this.camera.position.clone();
-    if (this.scene.fog && this.inBattle) { this.scene.fog.near = hi + 6; this.scene.fog.far = hi + 40; }
+    const pitch = 48 * Math.PI / 180; this.pitch = pitch;
+    this.camera.fov = 32; this.camera.updateProjectionMatrix();
+    const th = Math.tan(this.camera.fov * Math.PI / 360), a = this.w / this.h;
+    const viewW = 5.8, viewD = 8.5;
+    const dW = viewW / (2 * th * a), dH = viewD * Math.sin(pitch) / (2 * th);
+    const d = Math.max(dW, dH, 8); this.camDist = d;
+    this.viewHalfW = d * th * a; this.viewHalfD = d * th / Math.sin(pitch);
+    if (this.pan == null) this.pan = { x: 0, z: -GH / 2 + this.viewHalfD * 0.85 };
+    this.panBy(0, 0);
+    if (this.scene.fog && this.inBattle) { this.scene.fog.near = d + 8; this.scene.fog.far = d + 45; }
   }
+  panLimits() {
+    const hx = Math.max(0, GW / 2 + 0.6 - this.viewHalfW), zTop = -GH / 2 - 1.4 + this.viewHalfD * 0.8, zBot = GH / 2 + 0.6 - this.viewHalfD * 1.0;
+    return { x0: -hx, x1: hx, z0: Math.min(zTop, (zTop + zBot) / 2), z1: Math.max(zBot, (zTop + zBot) / 2) };
+  }
+  panBy(dxPx, dyPx) {
+    if (!this.pan) return;
+    const k = 2 * this.viewHalfW / this.w; // world units per CSS px at the look point
+    this.pan.x -= dxPx * k; this.pan.z -= dyPx * k / Math.sin(this.pitch);
+    const L = this.panLimits(); this.pan.x = Math.max(L.x0, Math.min(L.x1, this.pan.x)); this.pan.z = Math.max(L.z0, Math.min(L.z1, this.pan.z));
+    const d = this.camDist, p = this.pitch;
+    this.camera.position.set(this.pan.x, Math.sin(p) * d, this.pan.z + Math.cos(p) * d); this.camera.lookAt(this.pan.x, 0, this.pan.z); this.camera.updateMatrixWorld();
+    this.camBase = this.camera.position.clone();
+    this.sun.position.set(this.pan.x - 5, 13, this.pan.z + 7); this.sun.target.position.set(this.pan.x, 0, this.pan.z); this.sun.target.updateMatrixWorld();
+  }
+  panTo(x, z) { if (!this.pan) return; this.pan.x = x; this.pan.z = z; this.panBy(0, 0); }
   // NDC from the canvas' bounding rect; raycast real geometry (towers first, then terrain)
   ndc(clientX, clientY) {
     const r = this.canvas.getBoundingClientRect();
@@ -271,13 +276,12 @@ export class Renderer {
     this.scene.fog = new THREE.Fog(B.fog, 34, 70);
     this.hemi.color.set(B.hs); this.hemi.groundColor.set(B.hg); this.hemi.intensity = B.hI;
     this.sun.color.set(B.sun); this.sun.intensity = B.sunI;
-    this.sun.position.set(-5, 13, 7); this.sun.target.position.set(0, 0, 0);
     const [sat, con, tint] = B.grade; this.grade.uniforms.sat.value = sat; this.grade.uniforms.con.value = con; this.grade.uniforms.tint.value.set(...tint); this.grade.uniforms.vig.value = 0.34;
     this.buildTerrain(L, B);
     this.buildDeco(L, B);
     const base = baseMesh(B, !!game.bgun); base.position.set(cellX(L.base[0]), 0, cellZ(0.5)); this.level.add(base); this.baseGroup = base;
     this.baseCrystal = base.userData.crystal; this.shield = base.userData.shield; this.baseGun = base.userData.gun || null;
-    this.fit();
+    this.pan = null; this.fit();
     this.rangeRing = new THREE.Group();
     const rr = new THREE.Mesh(new THREE.RingGeometry(0.965, 1, 72), new THREE.MeshBasicMaterial({ color: 0x9cff60, transparent: true, opacity: 0.95, depthWrite: false, depthTest: false }));
     const rf = new THREE.Mesh(new THREE.CircleGeometry(1, 72), new THREE.MeshBasicMaterial({ color: 0x80ff40, transparent: true, opacity: 0.2, depthWrite: false, depthTest: false }));
@@ -348,7 +352,7 @@ export class Renderer {
       let avg = 0, n = 0; for (let dj = -3; dj <= 3; dj += 3) for (let di = -3; di <= 3; di += 3) { const ii = Math.min(nx - 1, Math.max(0, i + di)), jj = Math.min(nz - 1, Math.max(0, j + dj)); avg += h[jj * nx + ii]; n++; }
       avg /= n; const ao = Math.max(0.35, Math.min(1, 1 - (avg - h[k]) * 2.6));
       const pd = this.segD(x, z);
-      const patch = ss(0.5, 0.68, TX.fbm(x * 0.35 + 3, z * 0.35 + 7, 64, 4, 21) + (1 - ss(0.5, 1.4, pd)) * 0.18);
+      const patch = ss(0.62, 0.78, TX.fbm(x * 0.22 + 3, z * 0.22 + 7, 64, 3, 21) + (1 - ss(0.5, 1.0, pd)) * 0.1);
       let dep = 0; const cx = Math.round(x + (GW - 1) / 2), cy = Math.round(z + (GH - 1) / 2);
       if (cellAt(cx, cy) === C.DEPOSIT) { const d = Math.hypot(x - cellX(cx), z - cellZ(cy)); dep = Math.max(0, 1 - d / 0.5) * 0.9; }
       sp[k * 4] = pw[k] * 255; sp[k * 4 + 1] = patch * 255 * (1 - cellW[k]); sp[k * 4 + 2] = ao * 255; sp[k * 4 + 3] = dep * 255;
@@ -363,7 +367,7 @@ export class Renderer {
     this.uTime = this.uTime || { value: 0 };
     const U = { tTop: { value: Ly.top.d }, nTop: { value: Ly.top.n }, tPatch: { value: Ly.patch.d }, nPatch: { value: Ly.patch.n }, tCliff: { value: Ly.cliff.d }, nCliff: { value: Ly.cliff.n },
       tPath: { value: T.slabs.color }, nPath: { value: T.slabs.normal }, tSplat: { value: splat }, tMacro: { value: T.macro },
-      cTop: { value: new THREE.Color(B.topT) }, cPatch: { value: new THREE.Color(B.patchT) }, cCliff: { value: new THREE.Color(B.cliffT) }, cPath: { value: new THREE.Color(B.pathT) }, cDep: { value: new THREE.Color(0xffc040) },
+      cTop: { value: new THREE.Color(B.topT) }, cPatch: { value: new THREE.Color(B.patchT) }, cCliff: { value: new THREE.Color(B.cliffT) }, cPath: { value: new THREE.Color(B.pathT) }, cDep: { value: new THREE.Color(0xc08a20) },
       uSlab: { value: B.slab }, uDet: { value: B.det }, uTime: this.uTime, uOrig: { value: new THREE.Vector4(X0, Z0, EW, EH) } };
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, U);
@@ -378,10 +382,10 @@ vec3 soft3(sampler2D t, vec2 uv, float m, float det) { vec3 a = at2(t, uv, m).rg
         .replace('#include <map_fragment>', `
 vec2 wuv = vWP.xz;
 vec4 spl = texture2D(tSplat, (vWP.xz - uOrig.xy) / uOrig.zw);
-float mac = texture2D(tMacro, wuv * 0.045).r; float mac2 = texture2D(tMacro, wuv * 0.013 + 0.3).r;
+float mac = texture2D(tMacro, wuv * 0.045).r; float mac2 = texture2D(tMacro, wuv * 0.02 + 0.3).r;
 float am = smoothstep(0.35, 0.65, mac);
 vec2 uvT = wuv * 0.42, uvP = wuv * 0.5, uvC = vec2(wuv.x + vWP.y * 0.7, wuv.y - vWP.y * 0.4) * 0.6, uvS = (wuv + 0.5) * 0.5;
-vec3 cT = soft3(tTop, uvT, am, uDet) * cTop * mix(vec3(0.72, 0.8, 0.78), vec3(1.15, 1.1, 0.92), smoothstep(0.25, 0.75, mac2));
+vec3 cT = soft3(tTop, uvT, am, uDet) * cTop * mix(vec3(0.68, 0.82, 0.7), vec3(1.18, 1.12, 0.86), smoothstep(0.2, 0.8, mac2)) * (0.92 + 0.16 * mac);
 vec3 cP = soft3(tPatch, uvP, am, uDet + 0.15) * cPatch;
 vec3 cC = at2(tCliff, uvC, am).rgb * cCliff;
 vec3 cDirt = soft3(tPatch, uvP * 0.8, am, 0.7) * cPath * 1.1;
@@ -391,9 +395,11 @@ float wC = smoothstep(0.1, 0.3, slope);
 float wP = smoothstep(0.55, 0.85, spl.r);
 float wG = spl.g;
 vec3 tcol = mix(cT, cP, wG); tcol = mix(tcol, cS, wP); tcol = mix(tcol, cC, wC);
-float lip = smoothstep(0.1, 0.35, spl.r) * (1.0 - smoothstep(0.35, 0.6, spl.r)) * (1.0 - wC);
-tcol *= 1.0 + lip * 0.22;
-tcol *= mix(0.4, 1.0, spl.b);
+float lip = smoothstep(0.02, 0.12, spl.r) * (1.0 - smoothstep(0.14, 0.26, spl.r));
+tcol *= 1.0 + lip * 0.18;
+float trench = smoothstep(0.22, 0.55, spl.r) * (1.0 - smoothstep(0.86, 1.0, spl.r));
+tcol *= 1.0 - 0.55 * trench;
+tcol *= mix(0.3, 1.0, spl.b);
 if (vWP.y < -0.3) tcol *= mix(0.55, 1.0, smoothstep(-0.55, -0.3, vWP.y));
 diffuseColor.rgb *= tcol;
 vec3 nT = at2(nTop, uvT, am).xyz * 2.0 - 1.0, nP = at2(nPatch, uvP, am).xyz * 2.0 - 1.0, nC = at2(nCliff, uvC, am).xyz * 2.0 - 1.0, nS = mix(at2(nPatch, uvP * 0.8, am).xyz, texture2D(nPath, uvS).xyz, uSlab) * 2.0 - 1.0;
@@ -453,7 +459,7 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
       for (let i = 0; i < n; i++) {
         if (r() < 0.45) continue; const t = r(); const side = r() < 0.5 ? -1 : 1; const nx = -(bz - az) / len, nz = (bx - ax) / len;
         const x = ax + (bx - ax) * t + nx * side * 0.52, z = az + (bz - az) * t + nz * side * 0.52;
-        const inGrid = x > -GW / 2 && x < GW / 2 && z > -GH / 2 && z < GH / 2; if (inGrid && r() < 0.7) continue;
+        const inGrid = x > -GW / 2 - 0.3 && x < GW / 2 + 0.3 && z > -GH / 2 - 0.3 && z < GH / 2 + 0.3; if (inGrid) continue;
         const p = rockPile(r, B.rockMat, 1 + Math.floor(r() * 3), 0.12, inGrid ? 0.05 : 0.09); p.position.set(x, this.heightAt(x, z), z); roots.push(p);
       }
     }
@@ -472,7 +478,7 @@ vec4 ip = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
 vec4 ip = vec4(0.0);
 #endif
 float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.z * 0.7) * 0.05 * sw; transformed.z += cos(uTime * 1.7 + ip.z * 1.1) * 0.03 * sw;`); };
-    const max = 450; const im = new THREE.InstancedMesh(geo, mat, max); const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    const max = 160; const im = new THREE.InstancedMesh(geo, mat, max); const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     let n = 0, tries = 0;
     while (n < max && tries++ < max * 4) {
       const x = X0 + r() * EW, z = Z0 + r() * EH; const y = this.heightAt(x, z);
@@ -767,14 +773,14 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
     for (const e of g.enemies) {
       es.add(e.id);
       let m = this.emap.get(e.id);
-      if (!m) { m = enemyMesh(e.type, e.race); this.dyn.add(m); this.emap.set(e.id, m); }
+      if (!m) { m = enemyMesh(e.type, e.race); m.scale.setScalar(1.35); this.dyn.add(m); this.emap.set(e.id, m); }
       const gy = this.heightAt(e.x, e.z);
       m.position.set(e.x, e.air ? Math.max(gy, WATER_Y) : gy, e.z); m.rotation.y = e.rot;
       const u = m.userData; const moving = !e.blocked && g.freezeT <= 0;
       const ph = this.time * (e.type === 'swarm' ? 22 : 10) * (1 - (e.slow || 0)) + e.id;
       for (const l of u.legs) { if (l.flap || u.air) l.p.rotation.z = Math.sin(this.time * 16 + e.id + l.phase) * (l.amp || 0.4); else if (moving) l.p.rotation.x = Math.sin(ph + l.phase) * l.amp; }
       for (const s of u.spin) s.rotation.y += dt * 30;
-      if (u.air) u.inner.position.y = 0.95 + Math.sin(this.time * 3 + e.id) * 0.08; else u.inner.position.y = moving ? Math.abs(Math.sin(ph)) * 0.025 : 0;
+      if (u.air) u.inner.position.y = 0.95 + Math.sin(this.time * 3 + e.id) * 0.08; else { u.inner.position.y = moving ? Math.abs(Math.sin(ph)) * 0.03 : 0; u.inner.rotation.z = moving ? Math.sin(ph) * 0.07 : 0; u.inner.rotation.x = moving ? 0.05 + Math.cos(ph * 2) * 0.025 : 0; }
       if (u.air) { u.inner.rotation.z = Math.sin(this.time * 2 + e.id) * 0.1; u.sh.material.opacity = 0.35; }
       const b = u.body;
       if (e.hitT > 0) { b.emissive.setRGB(1, 1, 1); b.emissiveIntensity = 0.6; } else if ((e.slow || 0) > 0 || g.freezeT > 0) { b.emissive.setRGB(0.25, 0.55, 0.9); b.emissiveIntensity = 0.6; } else { b.emissive.copy(u.baseEm); b.emissiveIntensity = u.baseEI; }
@@ -905,7 +911,7 @@ export function makeIcons(towerKinds, enemyTypes) {
   const out = {};
   const shot = (obj, bg, h, dist) => { sc.background = bg; sc.add(obj); cam.position.set(dist * 0.55, h + dist * 0.6, dist * 0.8); cam.lookAt(0, h * 0.55, 0); r.render(sc, cam); const url = cv.toDataURL('image/png'); sc.remove(obj); return url; };
   const tb = grad('#4a5e6c', '#1a2228');
-  for (const k of towerKinds) { const m = towerMesh({ kind: k, lvl: k === 'factory' ? 1 : 0, branch: -1, id: 1, x: 0, z: 0, coinT: 0, beams: [] }); m.rotation.y = -0.5; out['t_' + k] = shot(m, tb, 0.7, 2.3); }
+  for (const k of towerKinds) { const m = towerMesh({ kind: k, lvl: k === 'factory' ? 1 : 0, branch: -1, id: 1, x: 0, z: 0, coinT: 0, beams: [] }); m.rotation.y = -0.6; out['t_' + k] = shot(m, tb, 0.62, 1.8); }
   const rb = grad('#5a3a26', '#1e140e'), gb = grad('#1e5a52', '#0a1e1c');
   for (const [type, race] of enemyTypes) {
     const m = enemyMesh(type, race); if (m.userData.hb) m.userData.hb.visible = false; if (m.userData.sh) m.userData.sh.visible = false; m.rotation.y = 0.6;

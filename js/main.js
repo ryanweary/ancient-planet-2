@@ -657,10 +657,21 @@ function tutCheck() {
 
 // ---------------- input ----------------
 let down = null;
-canvas.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+// drag pans the camera (portrait board is taller than the screen); a drag never builds
+const pointers = new Map();
+canvas.addEventListener('pointerdown', e => { pointers.set(e.pointerId, 1); if (pointers.size > 1) { down = null; return; } down = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), drag: false }; try { canvas.setPointerCapture(e.pointerId); } catch (_) { } });
+canvas.addEventListener('pointermove', e => {
+  if (!down || screen !== 'battle' || !R.inBattle) return;
+  if (!down.drag && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 10) { down.drag = true; closeMenus(); }
+  if (down.drag) { R.panBy(e.clientX - down.lx, e.clientY - down.ly); down.lx = e.clientX; down.ly = e.clientY; }
+});
+const endPtr = e => { pointers.delete(e.pointerId); };
+canvas.addEventListener('pointercancel', e => { endPtr(e); down = null; });
+canvas.addEventListener('wheel', e => { if (screen === 'battle' && R.inBattle) { R.panBy(0, -e.deltaY * 0.6); closeMenus(); e.preventDefault(); } }, { passive: false });
 canvas.addEventListener('pointerup', e => {
-  if (!down) return; const d = Math.hypot(e.clientX - down.x, e.clientY - down.y); down = null;
-  if (d > 14 || screen !== 'battle' || !G || ended || paused) return;
+  endPtr(e);
+  if (!down) return; const wasDrag = down.drag; const d = Math.hypot(e.clientX - down.x, e.clientY - down.y); down = null;
+  if (wasDrag || d > 10 || screen !== 'battle' || !G || ended || paused) return;
   initAudio();
   tap(e.clientX, e.clientY);
 });
