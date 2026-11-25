@@ -29,7 +29,7 @@ The v2 visual pass renders the game with Three.js r169. It uses PBR materials, s
 - **Textures:** rocky_terrain_02, dry_ground_01, granite_tile, aerial_rocks_02, rock_face, snow_02, coast_sand_01, burned_ground_01, brown_mud_leaves_01, forest_ground_04, concrete_floor_worn_001, metal_plate, leafy_grass.
 - **HDRI:** kloofendal_48d_partly_cloudy_puresky.
 
-**Models.** Towers, enemies, the temple base and the decoration are procedural multi-part models built in code (`js/gfx/models.js`).
+**Models.** Rocks, stumps, ferns, shrubs, crates and palms are CC0 photoscans from Poly Haven. Trees are impostors baked from Poly Haven's high-poly CC0 trees. Enemies are skinned, animated CC0 models by Quaternius. All are compressed with meshopt, KTX2 and WebP. Towers and the temple base are still procedural multi-part models built in code (`js/gfx/models.js`). **See [CREDITS.md](CREDITS.md) for every asset, its author and its licence.**
 
 **Procedural textures.** The carved path slabs, armour, metal, energy dome, grass tufts and particle sprites are generated at runtime (`js/gfx/tex.js`).
 

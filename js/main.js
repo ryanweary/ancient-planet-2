@@ -43,7 +43,8 @@ const R = new Renderer(canvas);
 const setQ = () => { const q = DBG.q || { high: 3, med: 2, low: 1 }[S.quality] || 3; R.autoQ = !DBG.q && S.quality === 'auto'; R.setQuality(q); };
 setQ();
 const ldBar = document.querySelector('#loading .ld-bar i');
-const prog = k => { if (ldBar) ldBar.style.width = Math.round(10 + k * 85) + '%'; };
+const ldPct = document.querySelector('#loading .ld-pct');
+const prog = k => { const v = Math.round(k * 100); if (ldBar) { ldBar.style.animation = 'none'; ldBar.style.width = Math.max(4, v) + '%'; } if (ldPct) ldPct.textContent = (v < 100 ? 'Loading assets… ' : 'Preparing… ') + v + '%'; };
 prog(0);
 try { await R.init(prog); } catch (e) { console.error('renderer init', e); }
 R.showMenu();
@@ -852,4 +853,4 @@ if (lv) { let i; if (lv.includes('-')) { const [a, b] = lv.split('-').map(Number
 else if (Q.get('screen')) go(Q.get('screen'));
 else showTitle();
 requestAnimationFrame(loop);
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=2').catch(() => { });
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=3').catch(() => { });

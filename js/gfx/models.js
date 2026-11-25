@@ -1,6 +1,7 @@
 // Detailed procedural models: towers, enemies, temple base, decoration
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { glbEnemy } from './assets.js';
 
 export const MAT = {};
 let T = null;
@@ -221,10 +222,34 @@ export function towerMesh(t) {
 }
 
 // ---------- enemies ----------
-const RUST = { body: 0xb8501e, dark: 0x3a3430, acc: 0xffa030 }, GLIM = { body: 0x22b89a, dark: 0x174a48, acc: 0xb8ff50 };
+export const RUST = { body: 0xb8501e, dark: 0x3a3430, acc: 0xffa030 }, GLIM = { body: 0x22b89a, dark: 0x174a48, acc: 0xb8ff50 };
 function legPivot(parent, x, y, z) { const p = new THREE.Group(); p.position.set(x, y, z); parent.add(p); return p; }
+function enemyHud(grp, type, hbY, shadowR) {
+  const sh = new THREE.Mesh(geoC('shq', () => new THREE.PlaneGeometry(1, 1)), MAT.shadow); sh.rotation.x = -Math.PI / 2; sh.position.y = 0.03; sh.scale.setScalar(shadowR * (type === 'flyer' ? 2.2 : 2.4)); sh.renderOrder = 1; grp.add(sh);
+  const hb = new THREE.Group();
+  const bg = new THREE.Mesh(geoC('hbbg', () => new THREE.PlaneGeometry(0.46, 0.075)), new THREE.MeshBasicMaterial({ color: 0x101010, depthTest: false, transparent: true, opacity: 0.85 }));
+  const fg = new THREE.Mesh(geoC('hbfg', () => new THREE.PlaneGeometry(0.44, 0.05)), new THREE.MeshBasicMaterial({ color: 0x40ff40, depthTest: false, transparent: true }));
+  fg.position.z = 0.001; bg.renderOrder = 10; fg.renderOrder = 11; hb.add(bg); hb.add(fg);
+  hb.position.y = hbY; if (type === 'boss') hb.scale.set(2.2, 1.6, 1);
+  hb.visible = false; grp.add(hb);
+  return { sh, hb, fg };
+}
+// skinned, animated glTF enemy (Quaternius CC0) with the same userData contract as the procedural ones
+function glbEnemyMesh(type, race, P) {
+  const G = glbEnemy(type, race, P); if (!G) return null;
+  const grp = new THREE.Group(); const inner = new THREE.Group(); grp.add(inner); inner.add(G.model);
+  const air = type === 'flyer'; if (air) inner.position.y = 0.95;
+  const hbY = { grunt: 0.95, swarm: 0.6, tank: 1.0, flyer: 1.45, brute: 1.5, boss: 2.5 }[type] || 1;
+  const shadowR = { grunt: 0.22, swarm: 0.16, tank: 0.36, flyer: 0.22, brute: 0.42, boss: 0.8 }[type] || 0.25;
+  const { sh, hb, fg } = enemyHud(grp, type, hbY, shadowR);
+  const body = G.mats.find(m => !m.emissiveMap && m.emissiveIntensity < 1.2) || G.mats[0];
+  const flash = G.mats.filter(m => m.emissiveIntensity < 1.2).map(m => ({ m, em: m.emissive.clone(), ei: m.emissiveIntensity }));
+  grp.userData = { inner, legs: [], spin: [], body, hb, fg, baseEm: body.emissive.clone(), baseEI: body.emissiveIntensity, air, sh, mixer: G.mixer, act: G.act, death: G.death, flash, glb: true };
+  return grp;
+}
 export function enemyMesh(type, race) {
   const R = race === 'rust', P = R ? RUST : GLIM;
+  const gm = glbEnemyMesh(type, race, P); if (gm) return gm;
   const body = R ? new THREE.MeshStandardMaterial({ map: T.armor.color, normalMap: T.armor.normal, color: P.body, metalness: 0.45, roughness: 0.45 })
     : new THREE.MeshStandardMaterial({ color: P.body, emissive: 0x0a5a48, emissiveIntensity: 0.5, metalness: 0.1, roughness: 0.18, flatShading: true });
   const dark = R ? MAT.dark : crystalMat(P.dark, 0x082a28, 0.3);

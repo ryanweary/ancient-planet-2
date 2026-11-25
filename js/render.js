@@ -13,6 +13,7 @@ import { C, rng } from './levels.js';
 import { cellX, cellZ } from './core.js';
 import * as TX from './gfx/tex.js';
 import { initModels, towerMesh, enemyMesh, baseMesh, decoMesh, rockPile, MAT, crystalMat, glow, rockGeo, crystalGeo } from './gfx/models.js';
+import { loadAssets, A as ASSETS, DecoBatch, TreeBatch, TREES } from './gfx/assets.js';
 
 // margins (world units) around the 9x15 play grid; terrain fills the whole view
 const MX = 5, MS = 4, MN = 10;
@@ -28,6 +29,18 @@ export const BIOMES = {
   sky: { slab: 1, det: 0.35, top: 'leafy_grass', topT: 0xd8f0a0, patch: 'coast_sand_01', patchT: 0xf0e0c0, pathT: 0xf0eadc, cliff: 'rock_face', cliffT: 0xd8c8b0, sky: 0xbfe4ff, fog: 0xdcefff, sun: 0xfff6e0, sunI: 2.8, hs: 0xe0f0ff, hg: 0x8a8a70, hI: 1.05, water: null, haz: 'void', deco: ['column', 'ruin', 'rock', 'pine'], obst: ['column', 'ruin', 'rock'], tuft: 'sky', tuftT: 0xffffff, amb: 'dust', crystalCol: 0x7fd8ff, rockT: 0xc8b8a4, leaf: 0x4a8a36, trunk: 0x6a4a2a, grade: [1.12, 1.03, [1.02, 1.02, 1.0]] },
   storm: { slab: 1, det: 0.35, top: 'dry_ground_01', topT: 0x9a94b0, patch: 'aerial_rocks_02', patchT: 0x8a88a8, pathT: 0xa8a4b8, cliff: 'rock_face', cliffT: 0x6a6684, sky: 0x4a4668, fog: 0x4a4668, sun: 0xe8e0ff, sunI: 2.2, hs: 0xc8c0ff, hg: 0x3a3450, hI: 0.95, water: 0x5070b8, haz: null, deco: ['shard', 'rock', 'rock', 'shard'], obst: ['shard', 'rock'], tuft: 'storm', tuftT: 0xffffff, amb: 'sparks', crystalCol: 0xc080ff, rockT: 0x6a6880, leaf: 0x3a4a40, trunk: 0x2a2a30, grade: [1.1, 1.08, [0.98, 0.97, 1.06]] },
   city: { slab: 1, det: 0.45, top: 'concrete_floor_worn_001', topT: 0xa8b0c0, patch: 'metal_plate', patchT: 0x98a8b8, pathT: 0x8a90a0, cliff: 'rock_face', cliffT: 0x707888, sky: 0x2a3048, fog: 0x2a3048, sun: 0xe0ecff, sunI: 2.3, hs: 0xc0d0ff, hg: 0x303848, hI: 1.0, water: 0x2aa8c8, haz: null, deco: ['tower', 'rock', 'tower'], obst: ['tower', 'rock'], tuft: 'city', tuftT: 0xffffff, amb: 'dust', crystalCol: 0x40f0ff, rockT: 0x707884, leaf: 0x2a3a30, trunk: 0x2a2a2a, grade: [1.08, 1.08, [0.97, 1.0, 1.06]] },
+};
+
+// per-biome picks from the glTF set (names are files in assets/models)
+const GLBDECO = {
+  verdant: { rocks: ['rock_07', 'rock_09', 'stone_01', 'rock_moss_set_01', 'namaqualand_boulder_05'], small: ['rock_09', 'stone_01', 'rock_07'], trees: ['pine', 'fir', 'broad', 'broad'], cover: ['fern_02', 'fern_02', 'shrub_03', 'tree_stump_01', 'dead_tree_trunk'] },
+  reef: { rocks: ['coast_rocks_01', 'namaqualand_boulder_05', 'rock_09'], tint: 0xfff4e8, small: ['moon_rock_03', 'rock_09'], trees: ['palm', 'palm', 'broad'], cover: ['fern_02', 'shrub_03'] },
+  frost: { rocks: ['moon_rock_01', 'moon_rock_05', 'moon_rock_03'], tint: 0xe4ecff, small: ['moon_rock_03', 'moon_rock_05'], trees: ['fir', 'pine', 'fir'], cover: ['dead_tree_trunk', 'tree_stump_01'], treeTint: 0xc8d8dc },
+  mire: { rocks: ['rock_moss_set_01', 'rock_07', 'stone_01'], tint: 0xb8c4a8, small: ['rock_09', 'rock_moss_set_01'], trees: ['broad', 'pine', 'broad'], cover: ['fern_02', 'tree_stump_01', 'dead_tree_trunk', 'shrub_03'], treeTint: 0x9aaa90, coverTint: 0xb0c0a0 },
+  forge: { rocks: ['rock_07', 'namaqualand_boulder_04', 'rock_09'], tint: 0x6a5450, small: ['rock_09', 'rock_07'], trees: [], cover: ['dead_quiver_trunk', 'dead_tree_trunk'] },
+  sky: { rocks: ['stone_01', 'moon_rock_05', 'rock_09'], tint: 0xf4ece0, small: ['moon_rock_03', 'rock_09'], trees: ['broad', 'pine'], cover: ['shrub_03', 'fern_02'] },
+  storm: { rocks: ['rock_07', 'rock_09', 'moon_rock_01'], tint: 0xa098bc, small: ['rock_09', 'moon_rock_03'], trees: [], cover: ['dead_quiver_trunk'] },
+  city: { rocks: ['rock_09', 'stone_01'], tint: 0x9aa2b0, small: ['rock_09'], trees: [], cover: ['old_military_crate', 'barrel_03', 'old_military_crate'] },
 };
 
 const GradeShader = {
@@ -81,7 +94,7 @@ export class Renderer {
     this.dyn = new THREE.Group(); this.scene.add(this.dyn);
     this.ray = new THREE.Raycaster(); this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.tmap = new Map(); this.emap = new Map(); this.pmap = new Map(); this.cmap = new Map(); this.omap = new Map(); this.bmap = new Map(); this.mmap = new Map(); this.beams = new Map();
-    this.effects = []; this.debris = []; this.time = 0;
+    this.effects = []; this.debris = []; this.corpses = []; this.time = 0; this.frameN = 0;
     this.fpsAcc = 0; this.fpsN = 0; this.fpsT = 0; this.lowCount = 0;
     this.w = 1; this.h = 1; this.rect = { left: 0, top: 0, width: 1, height: 1 };
     this.resize();
@@ -94,9 +107,10 @@ export class Renderer {
     const step = (k) => onProgress && onProgress(k);
     const hdrP = new RGBELoader().loadAsync('assets/sky.hdr').then(t => { t.mapping = THREE.EquirectangularReflectionMapping; this.envSky = pm.fromEquirectangular(t).texture; t.dispose(); this.scene.environment = this.envSky; }).catch(e => console.warn('hdr', e));
     const [granite, rock, leafy, rface] = await Promise.all([TX.loadTex('granite_tile_diff'), TX.loadLayer('aerial_rocks_02'), TX.loadLayer('leafy_grass'), TX.loadLayer('rock_face')]);
-    step(0.4);
+    step(0.15);
+    await loadAssets(this.renderer, p => step(0.15 + 0.75 * p));
     const T = { metal: TX.makeMetal(3), armor: TX.makeArmor(5), stripes: TX.makeStripes(), dome: TX.makeDome(), slabs: TX.makePathSlabs(granite, 1), rock: rface, soft: TX.makeSoft() };
-    step(0.7);
+    step(0.95);
     this.T = T; T.flare = TX.makeFlare(); T.smoke = TX.makeSmokeSprite(); T.water = TX.makeWaterNormal(); T.macro = TX.makeMacro(3); T.leafy = leafy; T.rocks = rock;
     initModels(T);
     this.initParticles();
@@ -335,7 +349,7 @@ export class Renderer {
     const L = game.L, B = BIOMES[L.biome]; this.B = B;
     for (const m of [this.tmap, this.emap, this.pmap, this.cmap, this.omap, this.bmap, this.mmap, this.beams]) m.clear();
     this.level.traverse(o => { if (o.geometry && o.userData.own) o.geometry.dispose(); });
-    this.level.clear(); this.dyn.clear(); this.effects = []; this.debris = [];
+    this.level.clear(); this.dyn.clear(); this.effects = []; this.debris = []; this.corpses = [];
     this.dyn.add(this.points); this.dyn.add(this.points2);
     this.scene.background = new THREE.Color(B.sky);
     this.scene.fog = new THREE.Fog(B.fog, 34, 70);
@@ -496,27 +510,47 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
   }
   buildDeco(L, B) {
     const r = rng(L.seed + 9); const roots = []; const grid = this.g.grid;
+    const G = GLBDECO[L.biome] || GLBDECO.verdant; const useGLB = ASSETS.ready;
+    const db = new DecoBatch(), tb = new TreeBatch(); const tint = G.tint ?? null;
+    const pick = (a) => a[Math.floor(r() * a.length)];
+    const rockAt = (x, z, s, list = G.rocks) => { const n = pick(list); db.add(n, x, this.heightAt(x, z) - 0.02 * s, z, r() * 6.28, s, tint, 0.8 + r() * 0.4); };
+    const treeAt = (x, z, h) => { const kind = pick(G.trees); const ids = TREES[kind]; if (!ids) return; const id = pick(ids); tb.add(id, x, this.heightAt(x, z) - 0.04, z, h * (kind === 'palm' ? 1.3 : 1), r() < 0.5); };
     for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
       const v = grid[y * GW + x], wx = cellX(x), wz = cellZ(y);
-      if (v === C.ROCK) { const kind = B.obst[Math.floor(r() * B.obst.length)]; const d = decoMesh(kind, B, r, 1); d.position.set(wx, this.heightAt(wx, wz), wz); d.rotation.y = r() * 6.28; roots.push(d); }
+      if (v === C.ROCK) {
+        const kind = B.obst[Math.floor(r() * B.obst.length)];
+        if (useGLB && kind === 'ruin') { this.ruinAt(db, wx, wz, r, tint, 0.9); continue; }
+        if (useGLB && kind === 'rock') { rockAt(wx, wz, 0.78 + r() * 0.2); if (r() < 0.7) rockAt(wx + (r() - 0.5) * 0.6, wz + (r() - 0.5) * 0.6, 0.25 + r() * 0.15, G.small); continue; }
+        const d = decoMesh(kind, B, r, 1); d.position.set(wx, this.heightAt(wx, wz), wz); d.rotation.y = r() * 6.28; roots.push(d);
+        if (useGLB) rockAt(wx + (r() - 0.5) * 0.5, wz + (r() - 0.5) * 0.5, 0.3 + r() * 0.15, G.small);
+      }
       else if (v === C.DEPOSIT) {
         const g = new THREE.Group(); const cm = crystalMat(0xffe070, 0xffa020, 1.1);
         for (let i = 0; i < 4; i++) { const m = new THREE.Mesh(crystalGeo(0.06 + r() * 0.04, 0.22 + r() * 0.2, 5, 'dep' + i), cm); m.position.set(0.24 + (r() - 0.5) * 0.15, 0, -0.22 + (r() - 0.5) * 0.15); m.rotation.set((r() - 0.5) * 0.6, r() * 6, (r() - 0.5) * 0.6); m.castShadow = true; g.add(m); }
-        g.add(rockPile(r, B.rockMat, 3, 0.18, 0.08).translateX(0.24).translateZ(-0.22));
+        if (useGLB) rockAt(wx + 0.24, wz - 0.22, 0.28, G.small); else g.add(rockPile(r, B.rockMat, 3, 0.18, 0.08).translateX(0.24).translateZ(-0.22));
         g.position.set(wx, 0, wz); roots.push(g);
       }
     }
-    // margin scatter: pines, ruins, rocks, crystals
+    // margin scatter: photoscanned rocks, impostor trees, ground cover, plus the biome's fantasy pieces
+    const target = useGLB ? 210 : 150;
     let tries = 0, placed = 0;
-    while (placed < 150 && tries++ < 1500) {
+    while (placed < target && tries++ < target * 10) {
       const x = X0 + 0.5 + r() * (EW - 1), z = Z0 + 0.5 + r() * (EH - 1);
       if (x > -GW / 2 - 0.15 && x < GW / 2 + 0.15 && z > -GH / 2 - 0.4 && z < GH / 2 + 0.15) continue;
       if (this.segD(x, z) < 1.0) continue;
       const hy = this.heightAt(x, z); if (hy < -0.1) continue;
       const near = Math.abs(x) < GW / 2 + 1.2 && z > -GH / 2 - 1.2 && z < GH / 2 + 1.2;
-      const kind = B.deco[Math.floor(r() * B.deco.length)];
+      let kind = B.deco[Math.floor(r() * B.deco.length)];
+      if (useGLB && G.cover.length && r() < 0.28) kind = 'cover';
       if (near && kind === 'pine' && r() < 0.5) continue; // keep tall trees from hiding the board
+      if (useGLB) {
+        if (kind === 'ruin') { this.ruinAt(db, x, z, r, tint, 1 + r() * 0.5); placed++; continue; }
+        if (kind === 'rock') { rockAt(x, z, 0.5 + r() * 0.9); if (r() < 0.5) rockAt(x + (r() - 0.5) * 0.9, z + (r() - 0.5) * 0.9, 0.2 + r() * 0.2, G.small); placed++; continue; }
+        if (kind === 'pine' && G.trees.length) { const n = 1 + (r() < 0.45 ? 1 : 0) + (near ? 0 : (r() < 0.3 ? 1 : 0)); for (let i = 0; i < n; i++) treeAt(x + (i ? (r() - 0.5) * 0.9 : 0), z + (i ? (r() - 0.5) * 0.9 : 0), (near ? 1.1 : 1.4) + r() * 0.9); placed++; continue; }
+        if (kind === 'cover') { const n = pick(G.cover); db.add(n, x, hy - 0.02, z, r() * 6.28, (n.includes('trunk') ? 1.2 : n.includes('crate') || n.includes('barrel') ? 0.5 : n.includes('stump') ? 0.55 : 0.6) * (0.7 + r() * 0.6), n.includes('fern') || n.includes('shrub') ? G.coverTint ?? null : tint); placed++; continue; }
+      }
       const d = decoMesh(kind, B, r, 0.9 + r() * 0.7); d.position.set(x, hy - 0.03, z); d.rotation.y = r() * 6.28; roots.push(d); placed++;
+      if (useGLB && r() < 0.6) rockAt(x + (r() - 0.5) * 0.7, z + (r() - 0.5) * 0.7, 0.25 + r() * 0.25, G.small);
     }
     // small rocks along the carved path edges
     for (const [ax, az, bx, bz] of this.segs) {
@@ -525,11 +559,23 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
         if (r() < 0.45) continue; const t = r(); const side = r() < 0.5 ? -1 : 1; const nx = -(bz - az) / len, nz = (bx - ax) / len;
         const x = ax + (bx - ax) * t + nx * side * 0.52, z = az + (bz - az) * t + nz * side * 0.52;
         const inGrid = x > -GW / 2 - 0.3 && x < GW / 2 + 0.3 && z > -GH / 2 - 0.3 && z < GH / 2 + 0.3; if (inGrid) continue;
-        const p = rockPile(r, B.rockMat, 1 + Math.floor(r() * 3), 0.12, inGrid ? 0.05 : 0.09); p.position.set(x, this.heightAt(x, z), z); roots.push(p);
+        if (useGLB) { rockAt(x, z, 0.14 + r() * 0.16, G.small); continue; }
+        const p = rockPile(r, B.rockMat, 1 + Math.floor(r() * 3), 0.12, 0.09); p.position.set(x, this.heightAt(x, z), z); roots.push(p);
       }
     }
     const baked = bake(roots); baked.traverse(o => { if (o.isMesh) o.userData.own = true; }); this.level.add(baked);
+    if (useGLB) {
+      db.build(this.level, true);
+      tb.build(this.level, this.uTime, true, G.treeTint ?? 0xffffff);
+    }
     this.buildTufts(L, B);
+  }
+  // weathered standing stones (photoscanned rock stretched upright) with rubble at the foot
+  ruinAt(db, x, z, r, tint, s) {
+    const y = this.heightAt(x, z) - 0.03;
+    db.add(r() < 0.5 ? 'stone_01' : 'rock_07', x, y, z, r() * 6.28, 0.42 * s, tint, 2.6 + r() * 1.4);
+    if (r() < 0.6) db.add('rock_09', x + 0.32 * s, y, z + (r() - 0.5) * 0.4, r() * 6.28, 0.3 * s, tint, 0.8);
+    if (r() < 0.5) db.add('stone_01', x - 0.3 * s, y, z + (r() - 0.5) * 0.4, r() * 6.28, 0.22 * s, tint, 0.7);
   }
   buildTufts(L, B) {
     const r = rng(L.seed + 21);
@@ -679,8 +725,8 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
     m.position.set(x, height / 2, z);
     this.addFx(m, life, (e, k) => { m.material.opacity = 0.9 * (1 - k); m.scale.set(1 + k, 1, 1 + k); });
   }
-  breakup(m) {
-    const u = m.userData; const col = u.body ? u.body.color.clone() : new THREE.Color(0x888888); const n = this.quality >= 3 ? 10 : this.quality === 2 ? 6 : 3;
+  breakup(m, f = 1) {
+    const u = m.userData; const col = u.body ? u.body.color.clone() : new THREE.Color(0x888888); const n = Math.round((this.quality >= 3 ? 10 : this.quality === 2 ? 6 : 3) * f);
     const big = m.scale.x * (u.big || 1); const mat = u.body || MAT.dark;
     const p = new THREE.Vector3(); m.getWorldPosition(p); const y0 = p.y + (u.air ? 0.95 : 0.3);
     for (let i = 0; i < n; i++) {
@@ -689,6 +735,14 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
       d.userData = { v: new THREE.Vector3((Math.random() - 0.5) * 3, 1.5 + Math.random() * 2.5, (Math.random() - 0.5) * 3), w: new THREE.Vector3(Math.random() * 10, Math.random() * 10, 0), life: 1.1 + Math.random() * 0.5 };
       this.dyn.add(d); this.debris.push(d);
     }
+  }
+  stepCorpses(dt) {
+    for (const m of this.corpses) {
+      const u = m.userData; u.dieT += dt; u.mixer.update(dt);
+      if (u.dieT > 0.9) { m.position.y -= dt * 0.5; u.sh.material = u.sh.material; }
+      if (u.dieT > 1.8) { this.dyn.remove(m); u.dead = true; }
+    }
+    this.corpses = this.corpses.filter(m => !m.userData.dead);
   }
   stepDebris(dt) {
     for (const d of this.debris) {
@@ -799,7 +853,7 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
     for (let i = n; i < b.userData.segs.length; i++) b.userData.segs[i].visible = false;
   }
   frame(dt, game, ui, sel) {
-    this.time += dt; if (this.uTime) this.uTime.value = this.time;
+    this.time += dt; this.frameN++; if (this.uTime) this.uTime.value = this.time;
     if (!this.inBattle) {
       if (this.planet) { this.planet.rotation.y += dt * 0.05; this.clouds.rotation.y += dt * 0.065; }
       if (this.ships) this.ships.forEach((s, i) => { s.position.x += dt * (0.25 + i * 0.1); if (s.position.x > 6) s.position.x = -6; });
@@ -845,17 +899,32 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
       const ph = this.time * (e.type === 'swarm' ? 22 : 10) * (1 - (e.slow || 0)) + e.id;
       for (const l of u.legs) { if (l.flap || u.air) l.p.rotation.z = Math.sin(this.time * 16 + e.id + l.phase) * (l.amp || 0.4); else if (moving) l.p.rotation.x = Math.sin(ph + l.phase) * l.amp; }
       for (const s of u.spin) s.rotation.y += dt * 30;
-      if (u.air) u.inner.position.y = 0.95 + Math.sin(this.time * 3 + e.id) * 0.08; else { u.inner.position.y = moving ? Math.abs(Math.sin(ph)) * 0.03 : 0; u.inner.rotation.z = moving ? Math.sin(ph) * 0.07 : 0; u.inner.rotation.x = moving ? 0.05 + Math.cos(ph * 2) * 0.025 : 0; }
-      if (u.air) { u.inner.rotation.z = Math.sin(this.time * 2 + e.id) * 0.1; u.sh.material.opacity = 0.35; }
-      const b = u.body;
-      if (e.hitT > 0) { b.emissive.setRGB(1, 1, 1); b.emissiveIntensity = 0.6; } else if ((e.slow || 0) > 0 || g.freezeT > 0) { b.emissive.setRGB(0.25, 0.55, 0.9); b.emissiveIntensity = 0.6; } else { b.emissive.copy(u.baseEm); b.emissiveIntensity = u.baseEI; }
+      if (u.mixer) {
+        // skinned walk cycle, stride synced to actual ground speed
+        const base = ENEMIES[e.type].speed || 1; const v = e.speed * (1 - (e.slow || 0)) * (1 + (e.hasted || 0));
+        if (u.act) u.act.timeScale = moving ? Math.max(0.35, Math.min(2.2, v / base)) * (e.type === 'swarm' ? 1.5 : 1.05) : (u.air ? 0.6 : 0.12);
+        if (this.quality >= 2 || ((this.frameN + e.id) & 1) === 0) u.mixer.update(this.quality >= 2 ? dt : dt * 2);
+        if (u.air) { u.inner.position.y = 0.95 + Math.sin(this.time * 3 + e.id) * 0.08; u.inner.rotation.z = Math.sin(this.time * 2 + e.id) * 0.1; u.sh.material.opacity = 0.35; }
+      } else {
+        if (u.air) u.inner.position.y = 0.95 + Math.sin(this.time * 3 + e.id) * 0.08; else { u.inner.position.y = moving ? Math.abs(Math.sin(ph)) * 0.03 : 0; u.inner.rotation.z = moving ? Math.sin(ph) * 0.07 : 0; u.inner.rotation.x = moving ? 0.05 + Math.cos(ph * 2) * 0.025 : 0; }
+        if (u.air) { u.inner.rotation.z = Math.sin(this.time * 2 + e.id) * 0.1; u.sh.material.opacity = 0.35; }
+      }
+      const fl = u.flash || [{ m: u.body, em: u.baseEm, ei: u.baseEI }];
+      const mode = e.hitT > 0 ? 1 : ((e.slow || 0) > 0 || g.freezeT > 0) ? 2 : 0;
+      if (mode !== u.fmode) { u.fmode = mode; for (const f of fl) { if (mode === 1) { f.m.emissive.setRGB(1, 1, 1); f.m.emissiveIntensity = 0.6; } else if (mode === 2) { f.m.emissive.setRGB(0.25, 0.55, 0.9); f.m.emissiveIntensity = 0.6; } else { f.m.emissive.copy(f.em); f.m.emissiveIntensity = f.ei; } } }
       const f = Math.max(0, e.hp / e.maxHp);
       u.hb.visible = f < 0.999;
       if (u.hb.visible) { u.fg.scale.x = Math.max(0.01, f); u.fg.position.x = -0.22 * (1 - f); u.fg.material.color.setHSL(f * 0.33, 0.95, 0.5); u.hb.quaternion.copy(m.quaternion).invert().multiply(this.camera.quaternion); }
       if (e.hasted && Math.random() < 0.1) this.burst(e.x, gy + 0.3, e.z, 0xff3030, 1, 0.5, 0.15, 0.3, { grav: -1 });
     }
     for (const [id, m] of this.emap) if (!es.has(id)) {
-      if (this.dies && this.dies.some(d => Math.hypot(d.x - m.position.x, d.z - m.position.z) < 0.9)) this.breakup(m);
+      const died = this.dies && this.dies.some(d => Math.hypot(d.x - m.position.x, d.z - m.position.z) < 0.9);
+      if (died && m.userData.mixer && m.userData.death && this.quality >= 2 && this.corpses.length < 24) {
+        // play the death clip, then sink into the ground
+        const u = m.userData; u.hb.visible = false; u.mixer.stopAllAction(); const a = u.mixer.clipAction(u.death); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.timeScale = 1.6; a.play();
+        u.dieT = 0; this.corpses.push(m); this.breakup(m, 0.5); this.emap.delete(id); continue;
+      }
+      if (died) this.breakup(m);
       this.dyn.remove(m); this.emap.delete(id);
     }
     // projectiles
@@ -942,7 +1011,7 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
     // effects
     for (const e of this.effects) { e.t += dt; e.upd(e, Math.min(1, e.t / e.life)); if (e.t >= e.life) { this.dyn.remove(e.o); e.o.traverse(o => { if (o.geometry && o.geometry !== this._ucyl) o.geometry.dispose(); if (o.material && o.isSprite) o.material.dispose(); }); e.dead = true; } }
     this.effects = this.effects.filter(e => !e.dead);
-    this.stepParticles(dt); this.stepDebris(dt); this.stepAmbient(dt);
+    this.stepParticles(dt); this.stepDebris(dt); this.stepAmbient(dt); this.stepCorpses(dt);
     // screen shake around the fitted camera
     if (this.camBase) { if (this.shake > 0) { this.shake = Math.max(0, this.shake - dt); const s = this.shake * 0.15; this.camera.position.set(this.camBase.x + (Math.random() - 0.5) * s, this.camBase.y + (Math.random() - 0.5) * s * 0.5, this.camBase.z); } else this.camera.position.copy(this.camBase); }
     this.render(dt);
@@ -979,7 +1048,7 @@ export function makeIcons(towerKinds, enemyTypes) {
   for (const k of towerKinds) { const m = towerMesh({ kind: k, lvl: k === 'factory' ? 1 : 0, branch: -1, id: 1, x: 0, z: 0, coinT: 0, beams: [] }); m.rotation.y = -0.6; out['t_' + k] = shot(m, tb, 0.62, 1.8); }
   const rb = grad('#5a3a26', '#1e140e'), gb = grad('#1e5a52', '#0a1e1c');
   for (const [type, race] of enemyTypes) {
-    const m = enemyMesh(type, race); if (m.userData.hb) m.userData.hb.visible = false; if (m.userData.sh) m.userData.sh.visible = false; m.rotation.y = 0.6;
+    const m = enemyMesh(type, race); if (m.userData.mixer) m.userData.mixer.update(0.35); if (m.userData.hb) m.userData.hb.visible = false; if (m.userData.sh) m.userData.sh.visible = false; m.rotation.y = 0.6;
     const big = type === 'boss' ? 2.4 : type === 'brute' ? 1.6 : type === 'tank' ? 1.3 : 1;
     out['e_' + type + '_' + race] = shot(m, race === 'rust' ? rb : gb, (ENEMIES[type].air ? 0.9 : 0.35) * Math.min(big, 1.6), 1.6 * big);
   }

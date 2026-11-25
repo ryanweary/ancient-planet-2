@@ -14,8 +14,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #05090f; fon
 #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: radial-gradient(circle at 60% 60%, #10303a, #05090f 70%); z-index: 50; transition: opacity .5s; }
 .ld-title, .title-logo { font-weight: 300; letter-spacing: .42em; font-size: 22px; color: #cfe6ee; text-shadow: 0 0 18px rgba(63,230,255,.45); text-align: center; padding-left: .42em; }
 .ld-title b, .title-logo b { font-weight: 800; color: var(--lime); letter-spacing: .1em; }
+.ld-pct { font-size: 12px; letter-spacing: .12em; color: #8fb4c0; margin-top: -12px; }
 .ld-bar { width: 200px; height: 6px; border-radius: 3px; background: #1a2228; overflow: hidden; }
-.ld-bar i { display: block; height: 100%; width: 30%; background: linear-gradient(90deg, var(--lime2), var(--lime)); animation: ld 1.2s infinite ease-in-out; }
+.ld-bar i { display: block; height: 100%; width: 4%; transition: width .25s; background: linear-gradient(90deg, var(--lime2), var(--lime)); animation: ld 1.2s infinite ease-in-out; }
 @keyframes ld { 0% { transform: translateX(-100%); } 100% { transform: translateX(330%); } }
 .hidden { display: none !important; }
 /* metal panels with lime edge lights */
