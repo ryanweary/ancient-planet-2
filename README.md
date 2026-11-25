@@ -19,3 +19,18 @@ A fan-made tower defense sequel built with Three.js. It has 40 new levels across
 `?level=3-2` · `?auto` (AI plays) · `?god` · `?speed=3` · `?q=1..3` · `?unlock` · `?easy` · `?screen=map|upg|info|set`
 
 No build step: it is static files with three@0.169 loaded from a CDN via an import map.
+
+## Graphics & asset credits
+
+The v2 visual pass renders the game with Three.js r169. It uses PBR materials, soft shadows, an HDRI environment, bloom and a per-biome colour grade.
+
+**Textures and HDRI.** All are CC0 from [Poly Haven](https://polyhaven.com), downsized to 1024/512 px and stored in `assets/`.
+
+- **Textures:** rocky_terrain_02, dry_ground_01, granite_tile, aerial_rocks_02, rock_face, snow_02, coast_sand_01, burned_ground_01, brown_mud_leaves_01, forest_ground_04, concrete_floor_worn_001, metal_plate, leafy_grass.
+- **HDRI:** kloofendal_48d_partly_cloudy_puresky.
+
+**Models.** Towers, enemies, the temple base and the decoration are procedural multi-part models built in code (`js/gfx/models.js`).
+
+**Procedural textures.** The carved path slabs, armour, metal, energy dome, grass tufts and particle sprites are generated at runtime (`js/gfx/tex.js`).
+
+No art, audio or code from the original Ancient Planet game is included.

@@ -31,6 +31,10 @@ const canvas = $('#c');
 const R = new Renderer(canvas);
 const setQ = () => { const q = DBG.q || { high: 3, med: 2, low: 1 }[S.quality] || 3; R.autoQ = !DBG.q && S.quality === 'auto'; R.setQuality(q); };
 setQ();
+const ldBar = document.querySelector('#loading .ld-bar i');
+const prog = k => { if (ldBar) ldBar.style.width = Math.round(10 + k * 85) + '%'; };
+prog(0);
+try { await R.init(prog); } catch (e) { console.error('renderer init', e); }
 R.showMenu();
 let ICONS = {};
 try {
@@ -129,7 +133,44 @@ function blobPath(r, cx, cy, rx, ry, n = 14, j = 0.28) {
   return d + 'Z';
 }
 function nodePos(w) { const r = rng(w * 71 + 5); const base = [[32, 112], [66, 94], [36, 74], [64, 52], [44, 30]]; return base.map(([x, y], i) => [x + (r() - 0.5) * 10, y + (r() - 0.5) * 6]); }
+const PAINTED = {};
+function paintedMap(w) {
+  if (PAINTED[w]) return PAINTED[w];
+  const b = WORLDS[w].biome, [sea, land, land2, acc] = MAPC[b];
+  const W = 300, H = 420, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
+  const hex = s => [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
+  const S = hex(sea), L1 = hex(land), L2 = hex(land2), A = hex(acc);
+  const hs = (ix, iy, s) => { let h = (ix * 374761393 + iy * 668265263 + s * 974711) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+  const vn = (px, py, s) => { const xi = Math.floor(px), yi = Math.floor(py), xf = px - xi, yf = py - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf); const a = hs(xi, yi, s), bb = hs(xi + 1, yi, s), cc = hs(xi, yi + 1, s), d = hs(xi + 1, yi + 1, s); return a + (bb - a) * u + (cc - a) * v + (a - bb - cc + d) * u * v; };
+  const fb = (px, py, s, o = 5) => { let t = 0, am = 0.5, f = 1, n = 0; for (let i = 0; i < o; i++) { t += vn(px * f, py * f, s + i) * am; n += am; am *= 0.5; f *= 2; } return t / n; };
+  const seed = w * 17 + 3;
+  const ht = new Float32Array(W * H);
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) { const nx = (i / W - 0.5) * 2, ny = (j / H - 0.52) * 2; const fall = 1 - Math.pow(Math.hypot(nx * 1.05, ny * 0.95), 2.2); ht[j * W + i] = fb(i / 70, j / 70, seed) * 0.9 + fall * 0.55 - 0.42 + fb(i / 18, j / 18, seed + 9, 3) * 0.12; }
+  const img = x.createImageData(W, H), d = img.data; const mix = (a, b, t) => a.map((v, k) => v + (b[k] - v) * Math.max(0, Math.min(1, t)));
+  for (let j = 1; j < H - 1; j++) for (let i = 1; i < W - 1; i++) {
+    const k = j * W + i, h0 = ht[k]; const dx = ht[k + 1] - ht[k - 1], dy = ht[k + W] - ht[k - W];
+    const shade = Math.max(0.55, Math.min(1.35, 1 + (-dx - dy) * 22)); let col;
+    if (h0 < 0) { const dep = Math.min(1, -h0 * 5); col = mix(mix(S, [255, 255, 255], 0.18), S.map(v => v * 0.7), dep); const wave = Math.sin(i * 0.15 + Math.sin(j * 0.05) * 3 + j * 0.02) > 0.97 ? 1.12 : 1; col = col.map(v => v * wave); if (h0 > -0.025) col = mix(col, A, 0.35); }
+    else { const t = Math.min(1, h0 * 1.8); col = mix(L1, L2, t + (fb(i / 25, j / 25, seed + 4, 3) - 0.5) * 0.9); if (h0 < 0.02) col = mix(col, A, 0.45); if (h0 > 0.42) col = mix(col, b === 'forge' ? [50, 26, 22] : [128, 116, 98], (h0 - 0.42) * 6); if (h0 > 0.62 && (b === 'frost' || b === 'storm')) col = mix(col, [236, 238, 242], (h0 - 0.58) * 8); col = col.map(v => v * shade); }
+    const g = (fb(i / 3, j / 3, seed + 20, 2) - 0.5) * 18; d[k * 4] = col[0] + g; d[k * 4 + 1] = col[1] + g; d[k * 4 + 2] = col[2] + g; d[k * 4 + 3] = 255;
+  }
+  x.putImageData(img, 0, 0);
+  // painterly strokes: trees / rocks / buildings
+  const r = rng(w * 131 + 17);
+  for (let n = 0; n < 340; n++) { const i = 10 + r() * (W - 20), j = 10 + r() * (H - 20), h0 = ht[(j | 0) * W + (i | 0)]; if (h0 < 0.04 || h0 > 0.45) continue; const z = 2 + r() * 3;
+    if (b === 'city') { x.fillStyle = 'rgba(20,20,34,.85)'; x.fillRect(i, j - z * 2, z * 1.4, z * 2); x.fillStyle = acc; x.fillRect(i + z * 0.4, j - z * 1.6, 1, 1); }
+    else if (b === 'reef' || b === 'mire') { x.fillStyle = 'rgba(0,0,0,.18)'; x.beginPath(); x.arc(i + 1, j + 1, z, 0, 7); x.fill(); x.fillStyle = `rgba(${A.join(',')},.55)`; x.beginPath(); x.arc(i, j, z * 0.7, 0, 7); x.fill(); }
+    else { x.fillStyle = 'rgba(0,0,0,.25)'; x.beginPath(); x.moveTo(i - z, j + 1); x.lineTo(i + 1, j - z * 1.8); x.lineTo(i + z + 1, j + 1); x.fill(); x.fillStyle = b === 'frost' ? 'rgba(255,255,255,.8)' : b === 'forge' ? `rgba(${A.join(',')},.8)` : `rgba(${L2.map(v => v * 0.6).join(',')},.95)`; x.beginPath(); x.moveTo(i - z * 0.8, j); x.lineTo(i, j - z * 1.8); x.lineTo(i + z * 0.8, j); x.fill(); }
+  }
+  if (b === 'sky' || b === 'storm') for (let n = 0; n < 14; n++) { const g = x.createRadialGradient(0, 0, 0, 0, 0, 30); g.addColorStop(0, 'rgba(255,255,255,.45)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.save(); x.translate(r() * W, r() * H); x.scale(2, 0.6); x.fillStyle = g; x.fillRect(-30, -30, 60, 60); x.restore(); }
+  const vg = x.createRadialGradient(W / 2, H / 2, W * 0.3, W / 2, H / 2, W * 0.85); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.45)'); x.fillStyle = vg; x.fillRect(0, 0, W, H);
+  return (PAINTED[w] = c.toDataURL('image/jpeg', 0.88));
+}
 function worldSVG(w) {
+  const np = nodePos(w);
+  return `<img class="painted" src="${paintedMap(w)}" alt=""><svg viewBox="0 0 100 140" preserveAspectRatio="none"><path d="M${np.map(p => p.join(',')).join(' L')}" stroke="#000" stroke-opacity=".35" stroke-width="1.8" fill="none" transform="translate(.4,.6)"/><path d="M${np.map(p => p.join(',')).join(' L')}" stroke="#fff6d0" stroke-opacity=".9" stroke-width=".9" stroke-dasharray="2 1.6" fill="none"/></svg>`;
+}
+function worldSVG_old(w) {
   const b = WORLDS[w].biome, [sea, land, land2, acc] = MAPC[b]; const r = rng(w * 131 + 17);
   let s = `<svg viewBox="0 0 100 140" preserveAspectRatio="none"><defs><radialGradient id="lg${w}" cx="50%" cy="45%" r="60%"><stop offset="0%" stop-color="${land}"/><stop offset="100%" stop-color="${land2}"/></radialGradient>
   <pattern id="wv${w}" width="8" height="4" patternUnits="userSpaceOnUse"><path d="M0 2 Q2 0 4 2 T8 2" stroke="rgba(255,255,255,.08)" fill="none" stroke-width=".5"/></pattern></defs>
@@ -384,9 +425,13 @@ let powerMode = null;    // power awaiting target
 let hudRefs = {}, lastHud = {};
 let tutStep = 0;
 function endBattleScene() { G = null; AI = null; sel = null; placeKind = null; powerMode = null; clearFloats(); }
-function startLevel(i) {
-  curIdx = i; S.plays++; save();
+let starting = false;
+async function startLevel(i) {
+  if (starting) return; starting = true;
   const L = genLevel(i);
+  try { await R.prepBiome(L.biome); } catch (e) { console.warn('biome', e); }
+  starting = false;
+  curIdx = i; S.plays++; save();
   G = new Game(L, { meta: metaEffects(S.owned), easy: S.easy, autoCollect: DBG.auto, god: DBG.god });
   AI = DBG.auto ? new AutoPlayer(G, { skill: 1, callEarly: true }) : null;
   paused = false; speed = DBG.speed || (DBG.auto ? 2 : 1); ended = false; endT = 0; sel = null; placeKind = null; powerMode = null;
@@ -490,7 +535,7 @@ function openBuildMenu(cx, cy) {
   const kinds = TOWER_ORDER.filter(k => G.L.towers.includes(k) && G.canBuild(k, cx, cy));
   if (!kinds.length) return;
   R.showCell(cx, cy);
-  const [sx, sy] = R.toScreen(cx - (GW - 1) / 2, 0, cy - (GH - 1) / 2);
+  const [sx, sy] = R.cellScreen(cx, cy);
   const n = kinds.length, perRow = Math.min(n, 4), rows = Math.ceil(n / perRow);
   const above = sy > 220;
   kinds.forEach((k, i) => {
@@ -632,8 +677,11 @@ function tap(sx, sy) {
   if (best) { G.tapCoin(best.id); sfx.coin && sfx.coin(); tutCheck(); return; }
   for (const o of G.objects) { const [x, y] = R.toScreen(o.x, 0.4, o.z); if (Math.hypot(x - sx, y - sy) < 36) { if (G.tapObject(o.id)) sfx.laser && sfx.laser(); closeMenus(); return; } }
   const p = R.pick(sx, sy);
-  if (!p || !p.inGrid) { closeMenus(); setPlace(null); return; }
-  const t = G.towerAt.get(p.cy * GW + p.cx);
+  window.__ap2 && (window.__ap2.lastPick = p);
+  if (!p || (!p.inGrid && !p.tower)) { closeMenus(); setPlace(null); return; }
+  const hitT = !placeKind && p.tower ? G.towers.find(o => o.id === p.tower) : null;
+  const t = hitT || G.towerAt.get(p.cy * GW + p.cx);
+  if (hitT && !p.inGrid) { if (sel === t) closeMenus(); else { click(); selectTower(t); } return; }
   if (placeKind) {
     if (G.canBuild(placeKind, p.cx, p.cy)) {
       const k = placeKind;
@@ -715,7 +763,11 @@ function loop(now) {
   stepFloats(dt);
   requestAnimationFrame(loop);
 }
-window.addEventListener('resize', () => { R.resize(); });
+const doResize = () => { R.resize(); };
+window.addEventListener('resize', doResize);
+window.addEventListener('orientationchange', () => setTimeout(doResize, 120));
+if (window.visualViewport) { visualViewport.addEventListener('resize', doResize); visualViewport.addEventListener('scroll', doResize); }
+if (window.ResizeObserver) new ResizeObserver(doResize).observe(canvas);
 document.addEventListener('visibilitychange', () => { if (document.hidden && screen === 'battle' && G && !ended) openPause(); });
 
 // ---------------- boot ----------------
