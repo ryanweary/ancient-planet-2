@@ -129,26 +129,63 @@ export class Renderer {
     this.w = w; this.h = h;
     if (this.inBattle) this.fit(); else if (this.menu) this.menuCam();
   }
-  // 3/4 camera: ~48 deg pitch, close zoom (about 6.8 tiles across in portrait); pan clamps to the board
+  // 3/4 camera: ~48 deg pitch. Default is the close view (~5.8 tiles across).
+  // zoom: 1 = default, >1 closer, <1 zoomed out until the whole board fits.
+  distForView(viewW, viewD, inset = false) {
+    const th = Math.tan(this.camera.fov * Math.PI / 360), a = this.w / this.h, hFrac = inset ? Math.max(0.55, (this.h - 110) / this.h) : 1;
+    return Math.max(viewW / (2 * th * a), viewD * Math.sin(this.pitch) / (2 * th * hFrac), 4);
+  }
+  distToFitBoard() {
+    // Look slightly south of center so the nearer (bottom) edge isn't eaten by perspective + the HUD.
+    const pitch = this.pitch, lookZ = 1.1;
+    const corners = [[-GW / 2, 0, -GH / 2 - 0.3], [GW / 2, 0, -GH / 2 - 0.3], [-GW / 2, 0, GH / 2 + 0.3], [GW / 2, 0, GH / 2 + 0.3], [0, 1.9, -GH / 2 + 0.6]];
+    const v = new THREE.Vector3(), insT = 52, insB = 108, insX = 10;
+    const saved = this.camera.position.clone();
+    let lo = 4, hi = 90;
+    for (let k = 0; k < 22; k++) {
+      const d = (lo + hi) / 2;
+      this.camera.position.set(0, Math.sin(pitch) * d, lookZ + Math.cos(pitch) * d); this.camera.lookAt(0, 0, lookZ); this.camera.updateMatrixWorld();
+      let ok = true;
+      for (const c of corners) { v.set(...c).project(this.camera); const sx = (v.x + 1) / 2 * this.w, sy = (1 - v.y) / 2 * this.h; if (v.z < 0 || v.z > 1 || sx < insX || sx > this.w - insX || sy < insT || sy > this.h - insB) ok = false; }
+      if (ok) hi = d; else lo = d;
+    }
+    this.camera.position.copy(saved);
+    this.lookOutZ = lookZ;
+    return Math.max(hi * 1.02, this.distDef || hi);
+  }
   fit() {
     const pitch = 48 * Math.PI / 180; this.pitch = pitch;
     this.camera.fov = 32; this.camera.updateProjectionMatrix();
-    const th = Math.tan(this.camera.fov * Math.PI / 360), a = this.w / this.h;
-    const viewW = 5.8, viewD = 8.5;
-    const dW = viewW / (2 * th * a), dH = viewD * Math.sin(pitch) / (2 * th);
-    const d = Math.max(dW, dH, 8); this.camDist = d;
-    this.viewHalfW = d * th * a; this.viewHalfD = d * th / Math.sin(pitch);
+    const prevZoom = this.zoom || 1;
+    this.distDef = this.distForView(5.8, 8.5, false);
+    this.distIn = this.distForView(3.4, 5.0, false);
+    this.distOut = this.distToFitBoard();
+    if (this.camDist == null || this.pan == null) { this.camDist = this.distDef; this.zoom = 1; }
+    else { this.camDist = Math.max(this.distIn, Math.min(this.distOut, this.distDef / prevZoom)); this.zoom = this.distDef / this.camDist; }
+    const th = Math.tan(this.camera.fov * Math.PI / 360);
+    this.viewHalfW = this.camDist * th * (this.w / this.h); this.viewHalfD = this.camDist * th / Math.sin(pitch);
     if (this.pan == null) this.pan = { x: 0, z: -GH / 2 + this.viewHalfD * 0.85 };
+    this.applyCam();
+  }
+  applyCam() {
+    if (!this.pan) return;
+    const th = Math.tan(this.camera.fov * Math.PI / 360), d = this.camDist, p = this.pitch;
+    this.viewHalfW = d * th * (this.w / this.h); this.viewHalfD = d * th / Math.sin(p);
     this.panBy(0, 0);
-    if (this.scene.fog && this.inBattle) { this.scene.fog.near = d + 8; this.scene.fog.far = d + 45; }
+    if (this.scene.fog && this.inBattle) { this.scene.fog.near = d + 8; this.scene.fog.far = d + Math.max(45, d * 0.8); }
+    const sc = this.sun.shadow.camera, pad = 2;
+    sc.left = -this.viewHalfW - pad; sc.right = this.viewHalfW + pad; sc.top = this.viewHalfD + pad + 2; sc.bottom = -this.viewHalfD - pad; sc.updateProjectionMatrix();
   }
   panLimits() {
-    const hx = Math.max(0, GW / 2 + 0.6 - this.viewHalfW), zTop = -GH / 2 - 1.4 + this.viewHalfD * 0.8, zBot = GH / 2 + 0.6 - this.viewHalfD * 1.0;
-    return { x0: -hx, x1: hx, z0: Math.min(zTop, (zTop + zBot) / 2), z1: Math.max(zBot, (zTop + zBot) / 2) };
+    const hx = Math.max(0, GW / 2 + 0.6 - this.viewHalfW);
+    const zMin = -GH / 2 - 1.4, zMax = GH / 2 + 0.6;
+    const useHalf = this.viewHalfD * Math.max(0.5, (this.h - 110) / this.h);
+    const mid = this.lookOutZ ?? ((zMin + zMax) / 2);
+    return { x0: -hx, x1: hx, z0: Math.min(zMin + useHalf, mid), z1: Math.max(zMax - useHalf, mid) };
   }
   panBy(dxPx, dyPx) {
     if (!this.pan) return;
-    const k = 2 * this.viewHalfW / this.w; // world units per CSS px at the look point
+    const k = 2 * this.viewHalfW / this.w;
     this.pan.x -= dxPx * k; this.pan.z -= dyPx * k / Math.sin(this.pitch);
     const L = this.panLimits(); this.pan.x = Math.max(L.x0, Math.min(L.x1, this.pan.x)); this.pan.z = Math.max(L.z0, Math.min(L.z1, this.pan.z));
     const d = this.camDist, p = this.pitch;
@@ -157,6 +194,26 @@ export class Renderer {
     this.sun.position.set(this.pan.x - 5, 13, this.pan.z + 7); this.sun.target.position.set(this.pan.x, 0, this.pan.z); this.sun.target.updateMatrixWorld();
   }
   panTo(x, z) { if (!this.pan) return; this.pan.x = x; this.pan.z = z; this.panBy(0, 0); }
+  // zoom around a screen point (pinch midpoint or wheel cursor). zoom=1 default, >1 closer, <1 out.
+  zoomTo(zoom, clientX, clientY) {
+    if (!this.pan || this.distDef == null) return;
+    const zMin = this.distDef / this.distOut, zMax = this.distDef / this.distIn;
+    zoom = Math.max(zMin, Math.min(zMax, zoom));
+    const newDist = Math.max(this.distIn, Math.min(this.distOut, this.distDef / zoom));
+    if (Math.abs(newDist - this.camDist) < 1e-4) return;
+    const world = (clientX != null) ? this.pick(clientX, clientY) : null;
+    this.camDist = newDist; this.zoom = this.distDef / this.camDist;
+    this.applyCam();
+    if (world) {
+      const y = this.heightAt(world.x, world.z);
+      const [sx, sy] = this.toScreen(world.x, y, world.z);
+      this.panBy(clientX - sx, clientY - sy);
+    }
+  }
+  toggleZoom(clientX, clientY) {
+    const mid = (this.distDef + this.distOut) / 2;
+    this.zoomTo(this.distDef / (this.camDist > mid ? this.distDef : this.distOut), clientX, clientY);
+  }
   // NDC from the canvas' bounding rect; raycast real geometry (towers first, then terrain)
   ndc(clientX, clientY) {
     const r = this.canvas.getBoundingClientRect();
@@ -172,7 +229,15 @@ export class Renderer {
     }
     if (this.ground) { const h = this.ray.intersectObject(this.ground, false); if (h.length) p = h[0].point; }
     if (!p) { p = new THREE.Vector3(); if (!this.ray.ray.intersectPlane(this.plane, p)) return null; }
-    const cx = Math.round(p.x + (GW - 1) / 2), cy = Math.round(p.z + (GH - 1) / 2);
+    let cx = Math.round(p.x + (GW - 1) / 2), cy = Math.round(p.z + (GH - 1) / 2);
+    // snap to the cell whose projected center is closest to the tap (sloped/far tiles at zoom-out)
+    let bestD = Infinity, bx = cx, by = cy;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const tx = cx + dx, ty = cy + dy; if (tx < 0 || ty < 0 || tx >= GW || ty >= GH) continue;
+      const [sx, sy] = this.cellScreen(tx, ty); const d = (sx - clientX) ** 2 + (sy - clientY) ** 2;
+      if (d < bestD) { bestD = d; bx = tx; by = ty; }
+    }
+    cx = bx; cy = by;
     return { x: p.x, z: p.z, cx, cy, tower, inGrid: cx >= 0 && cy >= 0 && cx < GW && cy < GH };
   }
   toScreen(x, y, z) { const v = new THREE.Vector3(x, y, z).project(this.camera); const r = this.canvas.getBoundingClientRect(); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; }
@@ -281,7 +346,7 @@ export class Renderer {
     this.buildDeco(L, B);
     const base = baseMesh(B, !!game.bgun); base.position.set(cellX(L.base[0]), 0, cellZ(0.5)); this.level.add(base); this.baseGroup = base;
     this.baseCrystal = base.userData.crystal; this.shield = base.userData.shield; this.baseGun = base.userData.gun || null;
-    this.pan = null; this.fit();
+    this.pan = null; this.camDist = null; this.zoom = 1; this.fit();
     this.rangeRing = new THREE.Group();
     const rr = new THREE.Mesh(new THREE.RingGeometry(0.965, 1, 72), new THREE.MeshBasicMaterial({ color: 0x9cff60, transparent: true, opacity: 0.95, depthWrite: false, depthTest: false }));
     const rf = new THREE.Mesh(new THREE.CircleGeometry(1, 72), new THREE.MeshBasicMaterial({ color: 0x80ff40, transparent: true, opacity: 0.2, depthWrite: false, depthTest: false }));

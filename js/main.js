@@ -17,11 +17,22 @@ const h = (html) => { const t = document.createElement('template'); t.innerHTML 
 const SKEY = 'ap2-save-v1';
 const defSave = () => ({ v: 1, stars: Array(NL).fill(0), emer: 0, owned: {}, hist: [], easy: false, music: true, sfx: true, quality: 'auto', seen: {}, tut: {}, plays: 0 });
 let S;
-try { S = Object.assign(defSave(), JSON.parse(localStorage.getItem(SKEY) || '{}')); } catch (e) { S = defSave(); }
-if (!Array.isArray(S.stars) || S.stars.length !== NL) S.stars = Array(NL).fill(0);
+function migrateSave(raw) {
+  const out = Object.assign(defSave(), raw && typeof raw === 'object' ? raw : {});
+  let st = out.stars;
+  if (!Array.isArray(st)) st = (st && typeof st === 'object') ? Array.from({ length: NL }, (_, i) => +st[i] || 0) : [];
+  if (st.length < NL) st = st.concat(Array(NL - st.length).fill(0));
+  else if (st.length > NL) st = st.slice(0, NL);
+  out.stars = st.map(n => Math.max(0, +n || 0));
+  if (!out.seen || typeof out.seen !== 'object') out.seen = {};
+  if (!out.tut || typeof out.tut !== 'object') out.tut = {};
+  if (!out.owned || typeof out.owned !== 'object') out.owned = {};
+  return out;
+}
+try { S = migrateSave(JSON.parse(localStorage.getItem(SKEY) || '{}')); } catch (e) { S = defSave(); }
 if (DBG.easy) S.easy = true;
 const save = () => { try { localStorage.setItem(SKEY, JSON.stringify(S)); } catch (e) { } };
-const unlocked = i => DBG.unlock || i === 0 || S.stars[i - 1] > 0;
+const unlocked = i => DBG.unlock || i <= 0 || (S.stars[i - 1] | 0) > 0;
 const maxUnlocked = () => { let m = 0; for (let i = 0; i < NL; i++) if (unlocked(i)) m = i; return m; };
 const totalStars = () => S.stars.reduce((a, b) => a + b, 0);
 const lname = i => `${Math.floor(i / 5) + 1}-${i % 5 + 1}`;
@@ -212,11 +223,18 @@ function renderWorld() {
     n.onclick = (e) => { e.stopPropagation(); if (!u) { sfx.deny && sfx.deny(); return; } click(); levelCard(i); };
     mv.appendChild(n);
   }
-  mv.querySelector('.arrow.l').onclick = () => { if (mapWorld > 0) { mapWorld--; click(); renderWorld(); } };
-  mv.querySelector('.arrow.r').onclick = () => { if (mapWorld < 7) { mapWorld++; click(); renderWorld(); } };
-  let sx = null;
-  mv.onpointerdown = e => { sx = e.clientX; };
-  mv.onpointerup = e => { if (sx == null) return; const dx = e.clientX - sx; sx = null; if (Math.abs(dx) > 50) { const nw = mapWorld + (dx < 0 ? 1 : -1); if (nw >= 0 && nw <= 7) { mapWorld = nw; renderWorld(); } } };
+  const maxWorld = Math.max(0, Math.min(7, Math.floor(maxUnlocked() / 5)));
+  mv.querySelector('.arrow.l').onclick = e => { e.stopPropagation(); if (mapWorld > 0) { mapWorld--; click(); renderWorld(); } };
+  mv.querySelector('.arrow.r').onclick = e => { e.stopPropagation(); if (mapWorld < 7) { mapWorld++; click(); renderWorld(); } };
+  mv.querySelectorAll('.dots i').forEach((d, i) => { d.onclick = e => { e.stopPropagation(); if (i <= maxWorld || i === mapWorld) { mapWorld = i; click(); renderWorld(); } }; });
+  let sx = null, sEl = null;
+  mv.onpointerdown = e => { sx = e.clientX; sEl = e.target; };
+  mv.onpointerup = e => {
+    if (sx == null) return; const dx = e.clientX - sx, start = sEl; sx = null; sEl = null;
+    if (Math.abs(dx) <= 50) return;
+    if (start && start.closest && (start.closest('.node') || start.closest('.levelcard') || start.closest('.arrow'))) return;
+    const nw = mapWorld + (dx < 0 ? 1 : -1); if (nw >= 0 && nw <= 7) { mapWorld = nw; renderWorld(); }
+  };
 }
 function unlockNotes(i) {
   const out = [];
@@ -395,7 +413,9 @@ function drawPanel(cv, card, wIdx, side) {
   x.fillStyle = 'rgba(0,0,0,.12)'; for (let yy = 0; yy < H; yy += 8) for (let xx = (yy / 8) % 2 * 4; xx < W; xx += 8) { x.beginPath(); x.arc(xx, yy, 1.2, 0, 7); x.fill(); }
 }
 function showStory(cards, done) {
-  if (!cards || !cards.length) { done(); return; }
+  let finished = false;
+  const finish = () => { if (finished) return; finished = true; if (el && el.parentNode) el.remove(); screen = prevScreen; try { done && done(); } catch (err) { console.warn('story done', err); } };
+  if (!cards || !cards.length) { const prevScreen = screen; finish(); return; }
   const prevScreen = screen; screen = 'story';
   const wIdx = STORY.indexOf(cards) >= 0 ? STORY.indexOf(cards) : 7;
   const el = h(`<div id="story"><div class="title-logo">ANCIENT PLANET <b>II</b></div><div class="comic panel"><div class="art"><canvas></canvas><div class="bubble"></div></div></div>
@@ -404,16 +424,17 @@ function showStory(cards, done) {
   let i = 0;
   const show = () => {
     const c = cards[i]; const side = i % 2 ? 1 : -1;
-    drawPanel($('canvas', el), c, wIdx, side);
+    try { drawPanel($('canvas', el), c, wIdx, side); } catch (err) { console.warn('story art', err); }
     const b = $('.bubble', el); b.style.top = '5%'; b.innerHTML = `<span class="who">${c.who}</span>${c.text}`;
     b.style.animation = 'none'; void b.offsetWidth; b.style.animation = '';
     b.style.setProperty('--tail', side < 0 ? '30%' : '65%');
     $('.progress i', el).style.width = ((i + 1) / cards.length * 100) + '%';
     $('#snext', el).textContent = i === cards.length - 1 ? 'Continue ▶' : 'Next ▶';
   };
-  const finish = () => { el.remove(); screen = prevScreen; done(); };
-  $('#snext', el).onclick = () => { click(); i++; if (i >= cards.length) finish(); else show(); };
-  $('#sskip', el).onclick = () => { click(); finish(); };
+  const next = () => { click(); i++; if (i >= cards.length) finish(); else show(); };
+  $('#snext', el).onclick = e => { e.stopPropagation(); next(); };
+  $('#sskip', el).onclick = e => { e.stopPropagation(); click(); finish(); };
+  el.onclick = e => { if (!e.target.closest('button')) next(); };
   show();
 }
 
@@ -428,9 +449,9 @@ function endBattleScene() { G = null; AI = null; sel = null; placeKind = null; p
 let starting = false;
 async function startLevel(i) {
   if (starting) return; starting = true;
+  try {
   const L = genLevel(i);
   try { await R.prepBiome(L.biome); } catch (e) { console.warn('biome', e); }
-  starting = false;
   curIdx = i; S.plays++; save();
   G = new Game(L, { meta: metaEffects(S.owned), easy: S.easy, autoCollect: DBG.auto, god: DBG.god });
   AI = DBG.auto ? new AutoPlayer(G, { skill: 1, callEarly: true }) : null;
@@ -444,6 +465,8 @@ async function startLevel(i) {
   const notes = unlockNotes(i);
   banner(`${lname(i)} ${L.name || ''}`);
   if (notes.length) setTimeout(() => G && G.L.idx === i && banner(notes[0]), 1700);
+  } catch (e) { console.error('startLevel', e); hint('Could not start this level — try again', 2000); }
+  finally { starting = false; }
 }
 function banner(text) { const b = h(`<div class="banner">${text}</div>`); $('#hud').appendChild(b); setTimeout(() => b.remove(), 1650); }
 function buildHUD() {
@@ -615,7 +638,7 @@ function openPause() {
 }
 function finishBattle() {
   const won = G.status === 'won';
-  const i = curIdx; const stars = won ? G.starRating() : 0;
+  const i = curIdx; const stars = won ? Math.max(1, G.starRating() || 1) : 0;
   let html;
   if (won) {
     const prev = S.stars[i]; const newStars = Math.max(0, stars - prev); const first = prev === 0;
@@ -659,17 +682,47 @@ function tutCheck() {
 let down = null;
 // drag pans the camera (portrait board is taller than the screen); a drag never builds
 const pointers = new Map();
-canvas.addEventListener('pointerdown', e => { pointers.set(e.pointerId, 1); if (pointers.size > 1) { down = null; return; } down = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), drag: false }; try { canvas.setPointerCapture(e.pointerId); } catch (_) { } });
+let pinch = null;
+let lastTap = { t: 0, x: 0, y: 0, empty: false };
+canvas.addEventListener('pointerdown', e => {
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) { }
+  if (pointers.size >= 2 && screen === 'battle' && R.inBattle) {
+    down = null;
+    const pts = [...pointers.values()];
+    const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+    pinch = { dist: Math.hypot(dx, dy) || 1, zoom: R.zoom || 1, midX: (pts[0].x + pts[1].x) / 2, midY: (pts[0].y + pts[1].y) / 2 };
+    closeMenus(); return;
+  }
+  if (pinch) return;
+  down = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), drag: false };
+});
 canvas.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pointers.size >= 2 && screen === 'battle' && R.inBattle) {
+    const pts = [...pointers.values()].slice(0, 2);
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+    const midX = (pts[0].x + pts[1].x) / 2, midY = (pts[0].y + pts[1].y) / 2;
+    R.panBy(midX - pinch.midX, midY - pinch.midY);
+    R.zoomTo(pinch.zoom * (dist / pinch.dist), midX, midY);
+    pinch.midX = midX; pinch.midY = midY;
+    return;
+  }
   if (!down || screen !== 'battle' || !R.inBattle) return;
   if (!down.drag && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 10) { down.drag = true; closeMenus(); }
   if (down.drag) { R.panBy(e.clientX - down.lx, e.clientY - down.ly); down.lx = e.clientX; down.ly = e.clientY; }
 });
 const endPtr = e => { pointers.delete(e.pointerId); };
-canvas.addEventListener('pointercancel', e => { endPtr(e); down = null; });
-canvas.addEventListener('wheel', e => { if (screen === 'battle' && R.inBattle) { R.panBy(0, -e.deltaY * 0.6); closeMenus(); e.preventDefault(); } }, { passive: false });
+canvas.addEventListener('pointercancel', e => { endPtr(e); if (pointers.size < 2) pinch = null; down = null; });
+canvas.addEventListener('wheel', e => {
+  if (screen !== 'battle' || !R.inBattle) return;
+  e.preventDefault(); closeMenus();
+  R.zoomTo((R.zoom || 1) * Math.exp(-e.deltaY * 0.0016), e.clientX, e.clientY);
+}, { passive: false });
 canvas.addEventListener('pointerup', e => {
   endPtr(e);
+  if (pinch) { if (pointers.size < 2) pinch = null; down = null; return; }
   if (!down) return; const wasDrag = down.drag; const d = Math.hypot(e.clientX - down.x, e.clientY - down.y); down = null;
   if (wasDrag || d > 10 || screen !== 'battle' || !G || ended || paused) return;
   initAudio();
@@ -689,6 +742,12 @@ function tap(sx, sy) {
   for (const o of G.objects) { const [x, y] = R.toScreen(o.x, 0.4, o.z); if (Math.hypot(x - sx, y - sy) < 36) { if (G.tapObject(o.id)) sfx.laser && sfx.laser(); closeMenus(); return; } }
   const p = R.pick(sx, sy);
   window.__ap2 && (window.__ap2.lastPick = p);
+  const now = performance.now();
+  const emptyish = p && !p.tower && !placeKind && !powerMode;
+  if (emptyish && lastTap.empty && lastTap.cx === p.cx && lastTap.cy === p.cy && now - lastTap.t < 320 && Math.hypot(sx - lastTap.x, sy - lastTap.y) < 18) {
+    const occ = G.towerAt.get(p.cy * GW + p.cx);
+    if (!occ) { closeMenus(); setPlace(null); R.toggleZoom(sx, sy); lastTap = { t: 0, x: 0, y: 0, empty: false }; return; }
+  }
   if (!p || (!p.inGrid && !p.tower)) { closeMenus(); setPlace(null); return; }
   const hitT = !placeKind && p.tower ? G.towers.find(o => o.id === p.tower) : null;
   const t = hitT || G.towerAt.get(p.cy * GW + p.cx);
@@ -702,6 +761,7 @@ function tap(sx, sy) {
     }
     setPlace(null);
   }
+  lastTap = { t: now, x: sx, y: sy, cx: p.cx, cy: p.cy, empty: !t && !placeKind };
   if (t) { if (sel === t) closeMenus(); else { click(); selectTower(t); } return; }
   if (sel) { closeMenus(); return; }
   openBuildMenu(p.cx, p.cy);
@@ -792,4 +852,4 @@ if (lv) { let i; if (lv.includes('-')) { const [a, b] = lv.split('-').map(Number
 else if (Q.get('screen')) go(Q.get('screen'));
 else showTitle();
 requestAnimationFrame(loop);
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { });
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=2').catch(() => { });
