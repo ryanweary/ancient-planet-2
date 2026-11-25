@@ -203,7 +203,7 @@ export class Renderer {
       fragmentShader: 'varying vec3 vN; varying vec3 vV; void main(){ float f=pow(1.0-abs(dot(vN,vV)),2.2); gl_FragColor=vec4(vec3(0.35,0.8,1.0)*f*1.6,f); }' }));
     g.add(atm); this.atm = atm;
     const nb = document.createElement('canvas'); nb.width = 512; nb.height = 256; const nc = nb.getContext('2d'); const ni = nc.createImageData(512, 256); const nd = ni.data;
-    for (let y = 0; y < 256; y++) for (let x = 0; x < 512; x++) { const n = TX.fbm(x / 64, y / 64, 8, 5, 51), m = TX.fbm(x / 32, y / 32, 16, 4, 61); const i = (y * 512 + x) * 4; const a = Math.max(0, n - 0.45) * 2; nd[i] = 10 + a * 60 * m + a * 30; nd[i + 1] = 12 + a * 80 * (1 - m); nd[i + 2] = 30 + a * 140; nd[i + 3] = 255; if (Math.random() < 0.004) { nd[i] = nd[i + 1] = nd[i + 2] = 200 + Math.random() * 55; } }
+    for (let y = 0; y < 256; y++) for (let x = 0; x < 512; x++) { const n = TX.fbm(x / 64, y / 64, 8, 5, 51), m = TX.fbm(x / 32, y / 32, 16, 4, 61); const i = (y * 512 + x) * 4; const a = Math.max(0, n - 0.45) * 2; nd[i] = 10 + a * 60 * m + a * 30; nd[i + 1] = 12 + a * 80 * (1 - m); nd[i + 2] = 30 + a * 140; nd[i + 3] = 255; }
     nc.putImageData(ni, 0, 0); const ntex = new THREE.CanvasTexture(nb); ntex.colorSpace = THREE.SRGBColorSpace;
     g.add(new THREE.Mesh(new THREE.SphereGeometry(90, 32, 16), new THREE.MeshBasicMaterial({ map: ntex, side: THREE.BackSide, fog: false })));
     const sp = new Float32Array(1500 * 3); for (let i = 0; i < 1500; i++) { const v = new THREE.Vector3().randomDirection().multiplyScalar(60 + Math.random() * 20); sp.set([v.x, v.y, v.z], i * 3); }
@@ -410,7 +410,7 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
     // water / lava / void planes
     this.water = null;
     if (B.water) {
-      const wc = new THREE.Color(B.water).multiplyScalar(0.55); const wm = new THREE.MeshStandardMaterial({ color: wc, roughness: 0.12, metalness: 0.35, normalMap: T.water, normalScale: new THREE.Vector2(0.5, 0.5), transparent: true, opacity: 0.86, emissive: wc, emissiveIntensity: 0.05, envMapIntensity: 0.9 });
+      const wc = new THREE.Color(B.water).multiplyScalar(0.55); const wm = new THREE.MeshStandardMaterial({ color: wc, roughness: 0.2, metalness: 0.1, normalMap: T.water, normalScale: new THREE.Vector2(0.5, 0.5), transparent: true, opacity: 0.9, emissive: wc, emissiveIntensity: 0.04, envMapIntensity: 0.45 });
       const w = new THREE.Mesh(new THREE.PlaneGeometry(EW, EH), wm); w.rotation.x = -Math.PI / 2; w.position.set(X0 + EW / 2, WATER_Y, Z0 + EH / 2); w.receiveShadow = true; w.renderOrder = 2; this.level.add(w); this.water = w;
       T.water.repeat.set(EW / 3, EH / 3);
     } else if (B.haz === 'lava') {
