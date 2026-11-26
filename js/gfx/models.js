@@ -80,6 +80,7 @@ function pad(t, ringCol, opts = {}) {
 // Collapse a tower's many small meshes into one draw call per (rigid frame, material): the base frame, the aiming head and each spinner stay
 // separate nodes so animation, recoil and aiming are unchanged. Merged geometry is cached per tower variant.
 const mergedC = {};
+const SHADOW_PROXY_MAT = new THREE.MeshBasicMaterial({ colorWrite: false });
 function mergeTower(grp, anim, ckey) {
   const frames = [grp, anim.head, ...anim.spin]; const fset = new Set(frames);
   const tmp = new THREE.Matrix4(); const inv = new THREE.Matrix4();
@@ -92,13 +93,20 @@ function mergeTower(grp, anim, ckey) {
       const k = o.material.uuid + (o.castShadow ? 'c' : 'n') + (o.receiveShadow ? 'r' : 'x'); let b = buckets.get(k); if (!b) buckets.set(k, b = { mat: o.material, cast: o.castShadow, recv: o.receiveShadow, list: [] });
       b.list.push(o); kill.push(o);
     });
+    // one position-only shadow proxy per rigid frame (layer 1 = seen only by the sun's shadow camera): ~7 shadow draws per tower become 1-3
+    const casters = []; for (const b of buckets.values()) if (b.cast) casters.push(...b.list);
+    if (casters.length) {
+      const sk = ckey + '|' + fi + '|shadow'; let sg = mergedC[sk];
+      if (!sg) { const gs = casters.map(o => { const ge = new THREE.BufferGeometry(); const src = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry; ge.setAttribute('position', src.attributes.position.clone()); o.updateMatrixWorld(true); tmp.multiplyMatrices(inv, o.matrixWorld); ge.applyMatrix4(tmp); return ge; }); sg = mergedC[sk] = mergeGeometries(gs); gs.forEach(x => x.dispose()); }
+      if (sg) { const sm = new THREE.Mesh(sg, SHADOW_PROXY_MAT); sm.castShadow = true; sm.receiveShadow = false; sm.layers.set(1); sm.userData.merged = true; frame.add(sm); }
+    }
     for (const [k, b] of buckets) {
       const gk = ckey + '|' + fi + '|' + k; let g = mergedC[gk];
       if (!g) {
         const gs = b.list.map(o => { const ge = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); for (const n of Object.keys(ge.attributes)) if (!['position', 'normal', 'uv'].includes(n)) ge.deleteAttribute(n); if (!ge.attributes.uv) ge.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(ge.attributes.position.count * 2), 2)); o.updateMatrixWorld(true); tmp.multiplyMatrices(inv, o.matrixWorld); ge.applyMatrix4(tmp); return ge; });
         g = mergedC[gk] = mergeGeometries(gs); gs.forEach(x => x.dispose());
       }
-      const m = new THREE.Mesh(g, b.mat); m.castShadow = b.cast; m.receiveShadow = b.recv; m.userData.merged = true; frame.add(m);
+      const m = new THREE.Mesh(g, b.mat); m.castShadow = false; m.receiveShadow = b.recv; m.userData.merged = true; frame.add(m);
     }
     for (const o of kill) o.parent.remove(o);
   }

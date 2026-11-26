@@ -133,7 +133,7 @@ export class Renderer {
     this.renderPass = new RenderPass(this.scene, this.camera); this.composer.addPass(this.renderPass);
     try {
       this.ao = new N8AOPass(this.scene, this.camera, 512, 512);
-      Object.assign(this.ao.configuration, { aoRadius: 0.9, distanceFalloff: 0.6, intensity: 2.6, halfRes: true, gammaCorrection: false, color: new THREE.Color(0x05080a) });
+      Object.assign(this.ao.configuration, { aoRadius: 0.9, distanceFalloff: 0.6, intensity: 2.6, halfRes: true, gammaCorrection: false, transparencyAware: false, color: new THREE.Color(0x05080a) });   // transparencyAware re-renders every transparent fx a second time each frame
       this.ao.setQualityMode('Medium'); this.ao.enabled = false; this.composer.addPass(this.ao);
     } catch (e) { console.warn('n8ao', e); this.ao = null; }
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.4, 0.86);
@@ -147,6 +147,7 @@ export class Renderer {
     this.smaa = new SMAAPass(512, 512); this.composer.addPass(this.smaa);        // 3 passes, Ultra only
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x4a3a20, 1.0); this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff0d0, 2.6); this.sun.position.set(-5, 13, 7); this.sun.castShadow = true;
+    this.sun.shadow.camera.layers.enable(1);   // tower shadow proxies live on layer 1 (shadow pass only)
     this.sun.shadow.mapSize.set(2048, 2048); const sc = this.sun.shadow.camera; sc.left = -9; sc.right = 9; sc.top = 12; sc.bottom = -12; sc.near = 1; sc.far = 40; this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.02;
     this.scene.add(this.sun); this.scene.add(this.sun.target);
     this.level = new THREE.Group(); this.scene.add(this.level);
@@ -197,7 +198,7 @@ export class Renderer {
     if (this.uPar) this.uPar.value = q >= 4 ? 0.035 : 0;
     if (this.tuftMesh) this.tuftMesh.count = Math.floor(this.tuftMesh.userData.max * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.25));
     if (this.ambP) this.ambP.geometry.setDrawRange(0, Math.floor(this.ambN * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.3)));
-    this._dpr = -1; this.applyDpr(); this.resize(); this.wake();
+    this._dpr = -1; this.applyDpr(); this.resize(); this.wake(); this._shDirty = true;
   }
   shadowMapStyle(q) { this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; }
   // effective device-pixel ratio for the current tier and governor scale
@@ -983,15 +984,22 @@ void main(){
   async _warm(game) {
     const grp = new THREE.Group(); const px = this.pan ? this.pan.x : 0, pz = this.pan ? this.pan.z : 0; grp.position.set(px, 0, pz); this.dyn.add(grp);
     const eps = [], tws = []; let i = 0;
-    for (const t of Object.keys(ENEMIES)) for (const r of ['rust', 'glim']) { const m = this.enemyGet(t, r); m.position.set(-2 + (i % 5) * 1, 0, -2 + Math.floor(i / 5) * 1); grp.add(m); eps.push(m); i++; }
-    i = 0; for (const k of game.L.towers) { try { const m = towerMesh({ kind: k, lvl: 0, branch: -1, id: -1, x: 0, z: 0, coinT: 0, beams: [] }); m.position.set(-2 + (i % 5) * 1, 0, 2 + Math.floor(i / 5)); grp.add(m); tws.push(m); i++; } catch (e) { } }
+    // enemies: pre-instance as many skinned clones per type/race as the level's biggest wave can field at once (no clone/bone-texture upload mid-wave)
+    const need = {};
+    for (const w of game.L.waves) { const c = {}; for (const gr of w) { const k = gr.type + '|' + gr.race; c[k] = (c[k] || 0) + gr.count; } for (const k in c) need[k] = Math.max(need[k] || 0, Math.min(10, Math.ceil(c[k] * 0.7) + 1)); }
+    for (const t of Object.keys(ENEMIES)) for (const r of ['rust', 'glim']) { const k = t + '|' + r; if (!need[k]) need[k] = 1; }
+    const have = this._ep || (this._ep = {});
+    for (const k in need) { const [t, r] = k.split('|'); const n = Math.max(0, need[k] - ((have[k] && have[k].length) || 0)); for (let j = 0; j < Math.max(1, n); j++) { const m = this.enemyGet(t, r); m.position.set(-2 + (i % 6) * 0.8, 0, -2 + Math.floor(i / 6) * 0.8); grp.add(m); eps.push(m); i++; } }
+    // towers: every level and branch variant (geometry + merged-mesh cache + shader programs), so building/upgrading mid-wave never builds geometry or compiles
+    i = 0; for (const k of game.L.towers) { const T = TOWERS[k]; const vs = [[0, -1], [1, -1], [2, -1]]; if (T && T.branches) vs.push([3, 0], [4, 0], [3, 1], [4, 1]);
+      for (const [lvl, branch] of vs) { try { const m = towerMesh({ kind: k, lvl, branch, id: -1, x: 0, z: 0, coinT: 0, beams: [], aim: 0 }); m.position.set(-2 + (i % 6) * 0.8, 0, 2 + Math.floor(i / 6) * 0.8); grp.add(m); tws.push(m); i++; } catch (e) { } } }
     const pj = ['bullet', 'bolt', 'lob', 'missile', 'shell'].map(k => { const m = this.projGet(k); m.position.set(px, 0.5, pz); this.dyn.add(m); return m; });
     const c = [px, 0.4, pz];
     this.flare(...c, 0xffffff, 0.3, 0.01); this.ring(px, pz, 0.5, 0xffffff, 0.01); this.pillar(px, pz, 0xffffff, 0.01, 0.1, 1); this.scorch(px, pz, 0.3);
     this.burst(...c, 0xffffff, 4, 1, 0.1, 0.1); this.smoke(...c, 2, 0x333333, 0.3); this.beamFx([[px, 0.3, pz], [px + 0.5, 0.3, pz]], 0xffffff, 0.01, 0.03);
     this.dyn.updateMatrixWorld(true);
     try { if (this.renderer.extensions.has('KHR_parallel_shader_compile')) await this.renderer.compileAsync(this.scene, this.camera); else this.renderer.compile(this.scene, this.camera); } catch (e) { console.warn('compile', e); }
-    this.grade.uniforms.time.value = this.time; this.composer.render(0);
+    this.grade.uniforms.time.value = this.time; this.renderer.shadowMap.needsUpdate = true; this.composer.render(0);
     this.dyn.remove(grp); for (const m of eps) { grp.remove(m); this.enemyPut(m); } for (const m of pj) { this.dyn.remove(m); this.projPut(m); }
     for (const e of this.effects) { this.dyn.remove(e.o); if (e.o.userData.pool) e.o.userData.pool.push(e.o); } this.effects = [];
     for (const P of [this.P1, this.P2]) { P.AP.fill(0.001); for (let k = 0; k < P.N; k++) P.A0[k * 4 + 3] = -1e4; P.lo = 0; P.hi = P.N - 1; }
@@ -1123,6 +1131,7 @@ void main(){
     }
     for (let i = n; i < b.userData.segs.length; i++) b.userData.segs[i].visible = false;
   }
+  _set(k) { const S = this._sets || (this._sets = {}); const s = S[k] || (S[k] = new Set()); s.clear(); return s; }   // per-frame scratch sets, reused (no GC churn)
   frame(dt, game, ui, sel) {
     this.time += dt; this.frameN++; if (this.uTime) this.uTime.value = this.time;
     if (!this.inBattle || !game) {
@@ -1134,7 +1143,7 @@ void main(){
     const g = game;
     this.consumeFx(g, ui);
     // towers
-    const seen = new Set();
+    const seen = this._set('seen');
     for (const t of g.towers) {
       seen.add(t.id);
       let m = this.tmap.get(t.id); const key = t.lvl + ':' + t.branch;
@@ -1160,7 +1169,7 @@ void main(){
     for (const [id, m] of this.tmap) if (!seen.has(id)) { this.dyn.remove(m); this.tmap.delete(id); }
     for (const [id, b] of this.beams) { const t = seen.has(id) && g.towers.find(o => o.id === id); if (!t || !t.beams || !t.beams.length) { b.userData.segs.forEach(s => s.visible = false); if (!seen.has(id)) { this.dyn.remove(b); this.beams.delete(id); } } }
     // enemies
-    const es = new Set();
+    const es = this._set('es');
     for (const e of g.enemies) {
       es.add(e.id);
       let m = this.emap.get(e.id);
@@ -1200,7 +1209,7 @@ void main(){
       this.dyn.remove(m); this.emap.delete(id); this.enemyPut(m);
     }
     // projectiles
-    const ps = new Set();
+    const ps = this._set('ps');
     for (const p of g.proj) {
       ps.add(p.id);
       let m = this.pmap.get(p.id);
@@ -1219,7 +1228,7 @@ void main(){
     }
     for (const [id, m] of this.pmap) if (!ps.has(id)) { this.dyn.remove(m); this.pmap.delete(id); this.projPut(m); }
     // coins
-    const cs = new Set();
+    const cs = this._set('cs');
     for (const c of g.coins) {
       cs.add(c.id);
       let m = this.cmap.get(c.id);
@@ -1236,7 +1245,7 @@ void main(){
     }
     for (const [id, m] of this.cmap) if (!cs.has(id)) { this.dyn.remove(m); this.cmap.delete(id); }
     // objects (targets / beacons)
-    const os = new Set();
+    const os = this._set('os');
     for (const o of g.objects) {
       os.add(o.id);
       let m = this.omap.get(o.id);
@@ -1267,10 +1276,10 @@ void main(){
     for (const L of g.lasers) if (!L.fxd) { L.fxd = true; this.pillar(L.x, L.z, 0xffa030, L.dur + 0.2, 0.08); this.pillar(L.x, L.z, 0xffffff, L.dur, 0.03); }
     for (const L of g.lasers) if (L.t < L.dur) { this.burst(L.x, 0.4, L.z, 0xffc060, 2, 2, 0.2, 0.25); if (Math.random() < 0.3) this.flare(L.x, 0.3, L.z, 0xffc060, 1, 0.1); }
     // blocks & mines
-    const bs = new Set();
+    const bs = this._set('bs');
     for (const b of g.blocks) { bs.add(b.id); let m = this.bmap.get(b.id); if (!m) { m = new THREE.Group(); const c1 = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.5, 0.85), MAT.stone); c1.position.y = 0.25; c1.castShadow = true; m.add(c1); const c2 = new THREE.Mesh(new THREE.BoxGeometry(0.87, 0.08, 0.87), MAT.stripes); c2.position.y = 0.42; m.add(c2); m.position.set(b.x, this.heightAt(b.x, b.z), b.z); this.dyn.add(m); this.bmap.set(b.id, m); this.smoke(b.x, 0.1, b.z, 6, 0x9a9a94, 0.5); } m.scale.y = 0.4 + 0.6 * b.hp / b.maxHp; }
     for (const [id, m] of this.bmap) if (!bs.has(id)) { this.dyn.remove(m); this.bmap.delete(id); }
-    const ms = new Set();
+    const ms = this._set('ms');
     for (const mi of g.mines) { ms.add(mi.id); let m = this.mmap.get(mi.id); if (!m) { m = new THREE.Group(); const c = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.08, 12), MAT.dark); c.position.y = 0.04; m.add(c); const l = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), MAT.redLight); l.position.y = 0.1; m.add(l); m.userData.l = l; m.position.set(mi.x, this.heightAt(mi.x, mi.z), mi.z); this.dyn.add(m); this.mmap.set(mi.id, m); } m.userData.l.visible = Math.sin(this.time * 8 + mi.id) > 0; }
     for (const [id, m] of this.mmap) if (!ms.has(id)) { this.dyn.remove(m); this.mmap.delete(id); }
     // base
@@ -1281,8 +1290,8 @@ void main(){
     // water shimmer
     if (this.water && !this.water.userData.shader) { const t = this.T.water; t.offset.x = this.time * 0.02; t.offset.y = this.time * 0.013; if (this.water.userData.lava) this.water.material.emissiveIntensity = 1.4 + 0.35 * Math.sin(this.time * 1.7); }
     // effects
-    for (const e of this.effects) { e.t += dt; e.upd(e, Math.min(1, e.t / e.life)); if (e.t >= e.life) { this.dyn.remove(e.o); if (e.o.userData.pool) { e.o.scale.setScalar(1); e.o.userData.pool.push(e.o); } else e.o.traverse(o => { if (o.isMesh) { o.material.dispose(); if (o.geometry !== this._ucyl && !o.geometry.userData.shared) o.geometry.dispose(); } }); e.dead = true; } }
-    this.effects = this.effects.filter(e => !e.dead);
+    for (const e of this.effects) { e.t += dt; e.upd(e, Math.min(1, e.t / e.life)); if (e.t >= e.life) { this.dyn.remove(e.o); if (e.o.userData.pool) { e.o.scale.setScalar(1); e.o.userData.pool.push(e.o); } else e.o.traverse(o => { if (o.isMesh) { if (o.geometry !== this._ucyl && !o.geometry.userData.shared) o.geometry.dispose(); } }); e.dead = true; } }
+    { const ef = this.effects; let w = 0; for (let r = 0; r < ef.length; r++) if (!ef[r].dead) ef[w++] = ef[r]; ef.length = w; }
     this.stepParticles(dt); this.stepDebris(dt); this.stepAmbient(dt); this.stepCorpses(dt);
     // screen shake around the fitted camera
     if (this.camBase) { if (this.shake > 0) { this.shake = Math.max(0, this.shake - dt); const s = this.shake * 0.15; this.camera.position.set(this.camBase.x + (Math.random() - 0.5) * s, this.camBase.y + (Math.random() - 0.5) * s * 0.5, this.camBase.z); } else this.camera.position.copy(this.camBase); }
@@ -1296,12 +1305,16 @@ void main(){
     this._lastDraw = now;
     this.govTick(dt, now);
     this.grade.uniforms.time.value = this.time;
+    // the sun never moves: below Ultra, re-render the shadow map on every other drawn frame (moving units' shadows lag <17ms; halves shadow-pass cost)
+    const sm = this.renderer.shadowMap; sm.autoUpdate = false;
+    sm.needsUpdate = this.quality >= 4 || !this.inBattle || ((this._shN = (this._shN || 0) + 1) & 1) === 1 || this._shDirty; this._shDirty = false;
     this.composer.render(dt);
   }
   // Adaptive quality governor: judges real frame-to-frame time (what the player feels). If a ~2.4s stretch stays over ~20ms it first lowers the
   // render resolution (dynamic DPR, down to ~1x), then drops a tier. It never steps back up on its own. onGov() lets main.js persist the result.
   govTick(dt, now) {
     const last = this._govLast; this._govLast = now;
+    if (this._govDrop && this.inBattle && this.g && !this.g.enemies.length && !this.g.queue.length) { this._govDrop = false; this.setQuality(Math.max(1, this.quality - 1)); this._gSkip = 30; this.govSteps = (this.govSteps || 0) + 1; if (this.onGov) this.onGov(this.quality, this.dprScale); return; }
     if (!this.autoQ || dt === 0 || !this.inBattle || last == null) { this._gAcc = 0; this._gN = 0; return; }
     const ms = now - last;
     if (ms > 250) { this._gAcc = 0; this._gN = 0; this._gSkip = 20; return; }          // tab switch / big stall: not a steady-state sample
@@ -1314,8 +1327,9 @@ void main(){
       this._gBad = 0; this._gSkip = 30;
       const floorScale = 1 / Math.max(1, this.targetDpr() / (this.dprScale || 1));   // scale at which effective DPR hits 1
       if ((this.dprScale || 1) > Math.max(0.55, floorScale) + 0.01) { this.dprScale = Math.max(Math.max(0.55, floorScale), (this.dprScale || 1) - 0.2); this.applyDpr(); this.resize(); }
-      else if (this.quality > 1) { this.setQuality(this.quality - 1); }
+      else if (this.quality > 1) { this._govDrop = true; }   // tier changes recompile shaders: applied only between waves (below)
       else return;
+      if (this._govDrop) return;
       this.govSteps = (this.govSteps || 0) + 1;
       if (this.onGov) this.onGov(this.quality, this.dprScale);
     } else this._gBad = 0;

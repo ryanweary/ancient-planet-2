@@ -68,6 +68,8 @@ export async function loadAssets(renderer, onProgress) {
         tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; A.trees = { tex, meta };
       } else {
         const g = await L.loadAsync(`assets/models/${name}.glb`, e => { if (e.total) { got[name] = kb * e.loaded / e.total; tick(); } });
+        // strip lights/cameras baked into exported models: each clone would add lights to the scene, changing the light count and forcing every lit shader to recompile mid-wave
+        const junk = []; g.scene.traverse(o => { if (o.isLight || o.isCamera) junk.push(o); }); for (const o of junk) o.removeFromParent();
         if (kind === 'deco') A.deco[name] = prepDeco(g); else A.enemy[name] = prepEnemy(g);
       }
     } catch (e) { console.warn('asset', name, e); }

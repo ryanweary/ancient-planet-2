@@ -7,7 +7,8 @@ import { Renderer, makeIcons } from './render.js';
 import { initAudio, sfx, setSfx, setMusic } from './audio.js';
 
 const Q = new URLSearchParams(location.search);
-const DBG = { auto: Q.has('auto'), god: Q.has('god'), unlock: Q.has('unlock'), nostory: Q.has('nostory') || Q.has('auto'), speed: +Q.get('speed') || 0, q: +Q.get('q') || 0, nogov: Q.has('nogov'), easy: Q.has('easy') };
+const BUILD = 'v5';
+const DBG = { auto: Q.has('auto'), god: Q.has('god'), unlock: Q.has('unlock'), nostory: Q.has('nostory') || Q.has('auto'), speed: +Q.get('speed') || 0, q: +Q.get('q') || 0, nogov: Q.has('nogov'), perf: Q.has('perf'), easy: Q.has('easy') };
 const NL = 40;
 const $ = (s, el = document) => el.querySelector(s);
 const ui = $('#ui');
@@ -92,7 +93,7 @@ const UI = {
     if (floats.length > 60 && cls === 'dmg') return;
     const [sx, sy] = R.toScreen(x, y, z);
     const el = pool.pop() || document.createElement('div');
-    el.className = 'ft ' + cls; el.textContent = text; el.style.opacity = 1;
+    el.className = 'ft ' + cls; el.textContent = text; el.style.opacity = 1; el.style.left = '0'; el.style.top = '0';
     floatsEl.appendChild(el);
     floats.push({ el, sx: sx + (Math.random() - 0.5) * 10, sy, t: 0, life: cls === 'dmg' ? 0.6 : 1.0 });
   },
@@ -101,7 +102,6 @@ function stepFloats(dt) {
   for (const f of floats) {
     f.t += dt; const k = f.t / f.life;
     f.el.style.transform = `translate(${f.sx}px, ${f.sy - k * 34}px) translate(-50%,-50%) scale(${k < 0.15 ? 0.6 + k * 2.6 : 1})`;
-    f.el.style.left = '0'; f.el.style.top = '0';
     f.el.style.opacity = k > 0.6 ? 1 - (k - 0.6) / 0.4 : 1;
   }
   for (let i = floats.length - 1; i >= 0; i--) if (floats[i].t >= floats[i].life) { const f = floats[i]; f.el.remove(); pool.push(f.el); floats.splice(i, 1); }
@@ -137,7 +137,7 @@ function showTitle() {
     <div class="sub">Return to Hamal</div>
     <div class="title-pod"><div class="play-big" id="tplay">${svgPlay}</div>
       <div class="title-small"><button class="sq" id="tset">⚙</button><button class="sq" id="tinfo">?</button><button class="sq" id="tmus">${S.music ? '♪' : '✕'}</button></div></div>
-    <div class="disclaimer">A fan-made tribute sequel with original art &amp; code. Not affiliated with the original developers.</div></div>`);
+    <div class="disclaimer">A fan-made tribute sequel with original art &amp; code. Not affiliated with the original developers. <span style="opacity:.6">Build ${BUILD}</span></div></div>`);
   ui.appendChild(el);
   $('#tplay').onclick = () => { click(); if (!S.seen.w0 && !DBG.nostory) { showStory(STORY[0], () => { S.seen.w0 = 1; save(); showMap(0); }); } else showMap(); };
   $('#tset').onclick = () => { click(); showSettings(); };
@@ -841,12 +841,26 @@ function handleFx() {
 
 // ---------------- main loop ----------------
 let last = performance.now();
+// ?perf: on-screen fps, worst frame (last 5s), tier / render scale, enemies, build
+let perfEl = null, pfLast = 0, pfN = 0, pfT0 = 0, pfWorst = 0, pfWorst5 = [];
+if (DBG.perf) { perfEl = document.createElement('div'); perfEl.style.cssText = 'position:fixed;left:4px;bottom:4px;z-index:99999;font:11px/1.3 monospace;color:#9f9;background:rgba(0,0,0,.65);padding:3px 6px;border-radius:4px;pointer-events:none;white-space:pre'; document.body.appendChild(perfEl); }
+function perfTick(now) {
+  if (pfLast) { const d = now - pfLast; pfWorst = Math.max(pfWorst, d); } pfLast = now; pfN++;
+  if (!pfT0) pfT0 = now;
+  if (now - pfT0 >= 1000) {
+    pfWorst5.push(pfWorst); if (pfWorst5.length > 5) pfWorst5.shift();
+    const fps = pfN * 1000 / (now - pfT0), dpr = R.renderer.getPixelRatio();
+    perfEl.textContent = `${fps.toFixed(0)} fps  worst ${pfWorst.toFixed(0)}ms (5s ${Math.max(...pfWorst5).toFixed(0)}ms)\n${['', 'Low', 'Med', 'High', 'Ultra'][R.quality]} dpr ${dpr.toFixed(2)}${R.autoQ ? ' auto' : ''}${capMs ? ' cap60' : ''}  en ${G ? G.enemies.length : 0}  ${BUILD}`;
+    pfN = 0; pfT0 = now; pfWorst = 0;
+  }
+}
 let loopErrs = 0, hzN = 0, hzPrev = 0, hzMin = 1e9, capMs = 0, lastTick = 0;
 function loop(now) {
   requestAnimationFrame(loop);               // queued first: an exception below can never kill the loop again
   // 90/120Hz screens: draw at ~60fps (half the GPU work and heat, still smooth). Detected from the real rAF interval.
   if (hzN < 90) { if (hzPrev) { hzMin = Math.min(hzMin, now - hzPrev); } hzPrev = now; if (++hzN === 90 && hzMin < 9.5) capMs = 15.5; }
   if (capMs && now - lastTick < capMs) return;
+  if (perfEl) perfTick(now);
   lastTick = now;
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   try { tick(dt); } catch (e) {
@@ -889,4 +903,4 @@ if (lv) { let i; if (lv.includes('-')) { const [a, b] = lv.split('-').map(Number
 else if (Q.get('screen')) go(Q.get('screen'));
 else showTitle();
 requestAnimationFrame(loop);
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=4').catch(() => { });
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=5').catch(() => { });
