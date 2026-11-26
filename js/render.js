@@ -19,7 +19,7 @@ import { initModels, towerMesh, enemyMesh, baseMesh, decoMesh, rockPile, MAT, cr
 import { loadAssets, A as ASSETS, DecoBatch, TreeBatch, TREES, loadTerrainLayer, decoHeight } from './gfx/assets.js';
 
 // margins (world units) around the 9x15 play grid; terrain fills the whole view
-const MX = 5, MS = 4, MN = 10;
+const MX = 5, MS = 7, MN = 10;
 const X0 = -GW / 2 - MX, Z0 = -GH / 2 - MN, EW = GW + 2 * MX, EH = GH + MN + MS;
 const PATH_D = -0.2, WATER_Y = -0.27, WATER_D = -0.5;
 
@@ -820,31 +820,52 @@ transformed.z += cos(uTime * 1.9 + ip.z * 1.3) * 0.018 * k;`);
   }
 
   // ---------------- particles ----------------
+  // GPU particles: each particle is written once at spawn (origin, velocity, birth time, life); the vertex shader integrates
+  // motion, gravity, ground bounce, growth and fade, so the CPU never touches live particles
   initParticles() {
-    const mk = (N, additive, tex) => {
+    const mk = (N, additive, tex, smoke) => {
       const g = new THREE.BufferGeometry();
-      const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), size = new Float32Array(N), alpha = new Float32Array(N), rot = new Float32Array(N);
-      g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-      g.setAttribute('size', new THREE.BufferAttribute(size, 1)); g.setAttribute('alpha', new THREE.BufferAttribute(alpha, 1)); g.setAttribute('rot', new THREE.BufferAttribute(rot, 1));
+      const A0 = new Float32Array(N * 4), AV = new Float32Array(N * 4), AC = new Float32Array(N * 3), AP = new Float32Array(N * 4);
+      for (let i = 0; i < N; i++) { A0[i * 4 + 3] = -1e4; AP[i * 4 + 1] = 0.001; }
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+      const at = { a0: new THREE.BufferAttribute(A0, 4), av: new THREE.BufferAttribute(AV, 4), ac: new THREE.BufferAttribute(AC, 3), ap: new THREE.BufferAttribute(AP, 4) };
+      for (const [k, v] of Object.entries(at)) { v.setUsage(THREE.DynamicDrawUsage); g.setAttribute(k, v); }
       const m = new THREE.ShaderMaterial({
         transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-        uniforms: { scale: { value: 300 }, map: { value: tex } },
-        vertexShader: 'attribute float size; attribute float alpha; attribute float rot; attribute vec3 color; varying vec3 vC; varying float vA; varying float vR; uniform float scale; void main(){ vC=color; vA=alpha; vR=rot; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_PointSize=size*scale/(-mv.z); gl_Position=projectionMatrix*mv; }',
+        uniforms: { scale: { value: 300 }, map: { value: tex }, uT: { value: 0 } },
+        defines: smoke ? { SMOKE: 1 } : {},
+        vertexShader: `attribute vec4 a0, av, ap; attribute vec3 ac; uniform float scale, uT; varying vec3 vC; varying float vA; varying float vR;
+void main(){
+  float t = uT - a0.w, life = ap.y;
+  if (t < 0.0 || t > life) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
+  vec3 p = a0.xyz + av.xyz * t; p.y -= 0.5 * av.w * t * t;
+  if (p.y < -0.15) p.y = -0.15 + abs(p.y + 0.15) * 0.15;
+  float k = 1.0 - t / life;
+  vC = ac;
+#ifdef SMOKE
+  vA = min(1.0, (1.0 - k) * 6.0) * k * 0.6; vR = ap.w + t * 0.6;
+#else
+  vA = k; vR = ap.w;
+#endif
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_PointSize = ap.x * (1.0 + ap.z * (1.0 - k)) * scale / (-mv.z);
+  gl_Position = projectionMatrix * mv; }`,
         fragmentShader: 'uniform sampler2D map; varying vec3 vC; varying float vA; varying float vR; void main(){ vec2 p=gl_PointCoord-0.5; float c=cos(vR), s=sin(vR); p=vec2(c*p.x-s*p.y, s*p.x+c*p.y)+0.5; vec4 t=texture2D(map,p); gl_FragColor=vec4(vC*t.rgb, t.a*vA); }',
       });
       const p = new THREE.Points(g, m); p.frustumCulled = false; p.renderOrder = 8;
-      return { p, N, pos, col, size, alpha, rot, v: new Float32Array(N * 3), life: new Float32Array(N), max: new Float32Array(N), s0: new Float32Array(N), grow: new Float32Array(N), grav: new Float32Array(N), next: 0 };
+      return { p, N, A0, AV, AC, AP, at, next: 0, lo: N, hi: -1 };
     };
-    this.P1 = mk(1200, true, this.T.soft); this.P2 = mk(500, false, this.T.smoke);
+    this.P1 = mk(3000, true, this.T.soft, false); this.P2 = mk(800, false, this.T.smoke, true);
     this.points = this.P1.p; this.points2 = this.P2.p;
     this._col = new THREE.Color();
   }
   emit(P, x, y, z, vx, vy, vz, color, size, life, grow = 0, grav = 0) {
     const i = P.next; P.next = (P.next + 1) % P.N;
-    P.pos[i * 3] = x; P.pos[i * 3 + 1] = y; P.pos[i * 3 + 2] = z;
-    P.v[i * 3] = vx; P.v[i * 3 + 1] = vy; P.v[i * 3 + 2] = vz;
-    const c = this._col.set(color); P.col[i * 3] = c.r; P.col[i * 3 + 1] = c.g; P.col[i * 3 + 2] = c.b;
-    P.life[i] = life; P.max[i] = life; P.s0[i] = size; P.grow[i] = grow; P.grav[i] = grav; P.rot[i] = Math.random() * 6.28;
+    P.A0[i * 4] = x; P.A0[i * 4 + 1] = y; P.A0[i * 4 + 2] = z; P.A0[i * 4 + 3] = this.time;
+    P.AV[i * 4] = vx; P.AV[i * 4 + 1] = vy; P.AV[i * 4 + 2] = vz; P.AV[i * 4 + 3] = grav;
+    const c = this._col.set(color); P.AC[i * 3] = c.r; P.AC[i * 3 + 1] = c.g; P.AC[i * 3 + 2] = c.b;
+    P.AP[i * 4] = size; P.AP[i * 4 + 1] = life; P.AP[i * 4 + 2] = grow; P.AP[i * 4 + 3] = Math.random() * 6.28;
+    if (i < P.lo) P.lo = i; if (i > P.hi) P.hi = i;
   }
   burst(x, y, z, color, n, speed, size, life, opts = {}) {
     const q = this.quality >= 3 ? 1 : this.quality === 2 ? 0.7 : 0.4;
@@ -857,18 +878,14 @@ transformed.z += cos(uTime * 1.9 + ip.z * 1.3) * 0.018 * k;`);
     const q = this.quality >= 2 ? 1 : 0.5;
     for (let i = 0; i < n * q; i++) this.emit(this.P2, x + (Math.random() - 0.5) * 0.3, y, z + (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.6, 0.5 + Math.random() * 0.6, (Math.random() - 0.5) * 0.6, color, size, 0.9 + Math.random() * 0.7, 1.2, -0.25);
   }
+  // upload only the slots written this frame
   stepParticles(dt) {
     for (const P of [this.P1, this.P2]) {
-      for (let i = 0; i < P.N; i++) {
-        if (P.life[i] <= 0) { P.alpha[i] = 0; continue; }
-        P.life[i] -= dt; const k = Math.max(0, P.life[i] / P.max[i]);
-        P.v[i * 3 + 1] -= P.grav[i] * dt;
-        P.pos[i * 3] += P.v[i * 3] * dt; P.pos[i * 3 + 1] += P.v[i * 3 + 1] * dt; P.pos[i * 3 + 2] += P.v[i * 3 + 2] * dt;
-        if (P.pos[i * 3 + 1] < -0.15) { P.pos[i * 3 + 1] = -0.15; P.v[i * 3 + 1] *= -0.3; }
-        P.size[i] = P.s0[i] * (1 + P.grow[i] * (1 - k)); P.rot[i] += dt * (P === this.P2 ? 0.6 : 0);
-        P.alpha[i] = P === this.P2 ? Math.min(1, (1 - k) * 6) * k * 0.6 : k;
+      P.p.material.uniforms.uT.value = this.time;
+      if (P.hi >= P.lo) {
+        for (const a of Object.values(P.at)) { a.clearUpdateRanges(); a.addUpdateRange(P.lo * a.itemSize, (P.hi - P.lo + 1) * a.itemSize); a.needsUpdate = true; }
+        P.lo = P.N; P.hi = -1;
       }
-      const a = P.p.geometry.attributes; a.position.needsUpdate = a.size.needsUpdate = a.alpha.needsUpdate = a.color.needsUpdate = a.rot.needsUpdate = true;
     }
     const s = this.h / (2 * Math.tan(this.camera.fov * Math.PI / 360));
     this.P1.p.material.uniforms.scale.value = s * 0.5; this.P2.p.material.uniforms.scale.value = s * 0.5;
@@ -964,6 +981,7 @@ transformed.z += cos(uTime * 1.9 + ip.z * 1.3) * 0.018 * k;`);
           this.burst(f.x, y + 0.3, f.z, col, 10 + f.r * 14, 2.5 + f.r * 2, 0.3 + f.r * 0.2, 0.45, { grav: 3 });
           this.burst(f.x, y + 0.2, f.z, 0xffe0a0, 6, 4, 0.08, 0.5, { grav: 7 });
           this.ring(f.x, f.z, f.r * 1.1, col, 0.4);
+          if (f.r > 0.9) this.shake = Math.max(this.shake || 0, 0.12);
           if (f.k !== 'lob') { this.smoke(f.x, y + 0.3, f.z, 3 + Math.round(f.r * 3), 0x3a3633, 0.6); this.scorch(f.x, f.z, 0.3 + f.r * 0.4); }
           else this.flare(f.x, y + 0.2, f.z, 0x80ff60, 1 + f.r, 0.3);
           break;
@@ -977,7 +995,7 @@ transformed.z += cos(uTime * 1.9 + ip.z * 1.3) * 0.018 * k;`);
           this.burst(f.x, y + (f.air ? 0.95 : 0.35), f.z, c, 10 * big, 2.5 * big, 0.26 * big, 0.5, { grav: 5 });
           this.smoke(f.x, y + 0.3, f.z, Math.round(2 * big), f.race === 'rust' ? 0x2a2420 : 0x4a8a80, 0.45 * big);
           if (f.race === 'rust') this.scorch(f.x, f.z, 0.3 * big);
-          if (big > 1) this.ring(f.x, f.z, 1.2 * big, c, 0.5);
+          if (big > 1) { this.ring(f.x, f.z, 1.2 * big, c, 0.5); this.shake = Math.max(this.shake || 0, 0.1 * big); }
           if (ui) ui.floatText(f.x, 0.8, f.z, '+' + f.g, 'gold');
           break;
         }
