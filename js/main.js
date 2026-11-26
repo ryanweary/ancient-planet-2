@@ -40,7 +40,9 @@ const lname = i => `${Math.floor(i / 5) + 1}-${i % 5 + 1}`;
 // ---------------- renderer + icons ----------------
 const canvas = $('#c');
 const R = new Renderer(canvas);
-const setQ = () => { const q = DBG.q || { high: 3, med: 2, low: 1 }[S.quality] || 3; R.autoQ = !DBG.q && S.quality === 'auto'; R.setQuality(q); };
+// auto tier: High on modern phones/desktops, Med on weak or old devices (fps watchdog still steps down)
+const autoTier = () => { const mem = navigator.deviceMemory || 4, cores = navigator.hardwareConcurrency || 4; return (mem < 3 || cores < 4) ? 2 : 3; };
+const setQ = () => { const q = DBG.q || { ultra: 4, high: 3, med: 2, low: 1 }[S.quality] || autoTier(); R.autoQ = !DBG.q && S.quality === 'auto'; R.setQuality(q); };
 setQ();
 const ldBar = document.querySelector('#loading .ld-bar i');
 const ldPct = document.querySelector('#loading .ld-pct');
@@ -347,7 +349,7 @@ function showSettings() {
     <div class="toggle">Easy mode<small style="flex:1;margin-left:10px;opacity:.6;font-size:11px">weaker enemies, more gold & life</small><div class="sw ${S.easy ? 'on' : ''}" data-k="easy"></div></div>
     <div class="toggle">Music<div class="sw ${S.music ? 'on' : ''}" data-k="music"></div></div>
     <div class="toggle">Sound effects<div class="sw ${S.sfx ? 'on' : ''}" data-k="sfx"></div></div>
-    <div class="toggle">Graphics<div class="seg">${['auto', 'high', 'med', 'low'].map(q => `<div data-q="${q}" class="${S.quality === q ? 'on' : ''}">${q[0].toUpperCase() + q.slice(1)}</div>`).join('')}</div></div>
+    <div class="toggle">Graphics<div class="seg">${['auto', 'ultra', 'high', 'med', 'low'].map(q => `<div data-q="${q}" class="${S.quality === q ? 'on' : ''}">${q[0].toUpperCase() + q.slice(1)}</div>`).join('')}</div></div>
     <div class="toggle">Progress<button class="btn red" id="sreset" style="font-size:13px;padding:6px 12px">Reset progress</button></div>
     <p style="opacity:.6;font-size:12px;margin-top:20px">Progress saves automatically on this device. No ads, no energy timers, no purchases.</p>
   </div></div>`);

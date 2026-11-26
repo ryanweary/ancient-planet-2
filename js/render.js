@@ -7,6 +7,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { N8AOPass } from './vendor/n8ao.min.js';
+import { PCSS_CHUNK } from './gfx/pcss.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GW, GH, TOWERS, ENEMIES } from './data.js';
 import { C, rng } from './levels.js';
@@ -44,11 +47,36 @@ const GLBDECO = {
 };
 
 const GradeShader = {
-  uniforms: { tDiffuse: { value: null }, sat: { value: 1.15 }, con: { value: 1.05 }, tint: { value: new THREE.Vector3(1, 1, 1) }, vig: { value: 0.32 } },
+  uniforms: { tDiffuse: { value: null }, sat: { value: 1.15 }, con: { value: 1.05 }, tint: { value: new THREE.Vector3(1, 1, 1) }, vig: { value: 0.32 },
+    sh: { value: new THREE.Vector3(0.96, 1.0, 1.05) }, hi: { value: new THREE.Vector3(1.04, 1.0, 0.95) }, grain: { value: 0.0 }, ca: { value: 0.0 }, time: { value: 0 }, res: { value: new THREE.Vector2(1, 1) } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float sat, con, vig; uniform vec3 tint; varying vec2 vUv;
-  void main(){ vec4 c=texture2D(tDiffuse,vUv); vec3 col=c.rgb; float l=dot(col,vec3(0.299,0.587,0.114)); col=mix(vec3(l),col,sat); col=(col-0.5)*con+0.5; col*=tint;
-  vec2 d=vUv-0.5; col*=1.0-vig*dot(d,d)*1.6; gl_FragColor=vec4(clamp(col,0.0,1.0),c.a); }`,
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float sat, con, vig, grain, ca, time; uniform vec3 tint, sh, hi; uniform vec2 res; varying vec2 vUv;
+  float h12(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+  void main(){
+    vec2 d=vUv-0.5; vec4 c=texture2D(tDiffuse,vUv); vec3 col=c.rgb;
+    if (ca > 0.0) { vec2 o=d*ca*dot(d,d); col.r=texture2D(tDiffuse,vUv-o).r; col.b=texture2D(tDiffuse,vUv+o).b; }
+    float l=dot(col,vec3(0.2126,0.7152,0.0722));
+    col=mix(vec3(l),col,sat);
+    // filmic S-curve contrast around mid-grey, then split-tone shadows/highlights
+    col=clamp(col,0.0,1.0); vec3 s=col*col*(3.0-2.0*col); col=mix(col,s,clamp(con-1.0,0.0,1.0)*2.2);
+    col*=mix(sh,hi,smoothstep(0.15,0.75,l));
+    col*=tint;
+    col*=1.0-vig*dot(d,d)*1.6;
+    col+=(h12(vUv*res+fract(time)*137.0)-0.5)*grain;
+    gl_FragColor=vec4(clamp(col,0.0,1.0),c.a); }`,
+};
+// separable tilt-shift: blur grows away from a horizontal focus band (subtle miniature depth-of-field)
+const TiltShader = {
+  uniforms: { tDiffuse: { value: null }, dir: { value: new THREE.Vector2(1, 0) }, res: { value: new THREE.Vector2(1, 1) }, focus: { value: 0.45 }, band: { value: 0.2 }, amt: { value: 3.0 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform vec2 dir, res; uniform float focus, band, amt; varying vec2 vUv;
+  void main(){
+    float dy=vUv.y-focus; float k=dy>0.0?smoothstep(band, band+0.3, dy):0.35*smoothstep(band+0.15, band+0.45, -dy); float r=k*amt;
+    if (r < 0.05) { gl_FragColor=texture2D(tDiffuse,vUv); return; }
+    vec2 st=dir/res*r; vec4 acc=texture2D(tDiffuse,vUv)*0.2270270270;
+    acc+=(texture2D(tDiffuse,vUv+st*1.3846153846)+texture2D(tDiffuse,vUv-st*1.3846153846))*0.3162162162;
+    acc+=(texture2D(tDiffuse,vUv+st*3.2307692308)+texture2D(tDiffuse,vUv-st*3.2307692308))*0.0702702703;
+    gl_FragColor=acc; }`,
 };
 
 function bake(roots, shadows = true) {
@@ -80,12 +108,21 @@ export class Renderer {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 200);
     this.quality = 3;
+    // post chain: [N8AO (scene+GTAO-style AO) | plain render] -> bloom -> tilt-shift -> filmic output -> grade/LUT/vignette/grain -> SMAA
     this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.renderPass = new RenderPass(this.scene, this.camera); this.composer.addPass(this.renderPass);
+    try {
+      this.ao = new N8AOPass(this.scene, this.camera, 512, 512);
+      Object.assign(this.ao.configuration, { aoRadius: 0.9, distanceFalloff: 0.6, intensity: 2.6, halfRes: true, gammaCorrection: false, color: new THREE.Color(0x05080a) });
+      this.ao.setQualityMode('Medium'); this.ao.enabled = false; this.composer.addPass(this.ao);
+    } catch (e) { console.warn('n8ao', e); this.ao = null; }
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.4, 0.86);
     this.composer.addPass(this.bloom);
+    this.tiltH = new ShaderPass(TiltShader); this.tiltV = new ShaderPass(TiltShader); this.tiltV.uniforms.dir.value.set(0, 1);
+    this.composer.addPass(this.tiltH); this.composer.addPass(this.tiltV);
     this.composer.addPass(new OutputPass());
     this.grade = new ShaderPass(GradeShader); this.composer.addPass(this.grade);
+    this.smaa = new SMAAPass(512, 512); this.composer.addPass(this.smaa);
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x4a3a20, 1.0); this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff0d0, 2.6); this.sun.position.set(-5, 13, 7); this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048); const sc = this.sun.shadow.camera; sc.left = -9; sc.right = 9; sc.top = 12; sc.bottom = -12; sc.near = 1; sc.far = 40; this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.02;
@@ -119,17 +156,31 @@ export class Renderer {
     this.ready = true;
     this.buildMenuScene();
   }
+  // tiers: 1 Low (direct render), 2 Med (bloom+SMAA), 3 High (+N8AO half-res, tilt-shift, grass blades), 4 Ultra (+PCSS soft shadows, full-res AO, 4K shadow map, grain/CA)
   setQuality(q) {
     this.quality = q;
-    const dpr = Math.min(window.devicePixelRatio || 1, q >= 3 ? 2 : q === 2 ? 1.5 : 1);
+    const dpr = Math.min(window.devicePixelRatio || 1, q >= 4 ? 2.5 : q >= 3 ? 2 : q === 2 ? 1.5 : 1);
     this.renderer.setPixelRatio(dpr);
     this.renderer.shadowMap.enabled = q >= 2; this.sun.castShadow = q >= 2;
-    const ms = q >= 3 ? 2048 : 1024;
+    const ms = q >= 4 ? 4096 : q >= 3 ? 2048 : 1024;
     if (this.sun.shadow.mapSize.x !== ms) { this.sun.shadow.mapSize.set(ms, ms); if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; } }
+    this.setPCSS(q >= 4);
     this.bloom.enabled = q >= 2;
+    if (this.ao) { this.ao.enabled = q >= 3; this.renderPass.enabled = !this.ao.enabled; this.ao.configuration.halfRes = q < 4; this.ao.setQualityMode(q >= 4 ? 'High' : 'Medium'); }
+    this.tiltH.enabled = this.tiltV.enabled = q >= 3;
+    this.smaa.enabled = q >= 2;
+    this.grade.uniforms.grain.value = q >= 4 ? 0.035 : q >= 3 ? 0.018 : 0; this.grade.uniforms.ca.value = q >= 4 ? 0.012 : 0;
+    if (this.grassMesh) this.grassMesh.visible = q >= 3;
     if (this.tuftMesh) this.tuftMesh.count = Math.floor(this.tuftMesh.userData.max * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.25));
     if (this.ambP) this.ambP.geometry.setDrawRange(0, Math.floor(this.ambN * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.3)));
     this._dpr = -1; this.resize();
+  }
+  // PCSS (percentage-closer soft shadows) for Ultra: contact-hardening penumbrae; swaps the shadow chunk and recompiles
+  setPCSS(on) {
+    if (this._pcss === on) return; this._pcss = on;
+    if (!this._chunk0) this._chunk0 = THREE.ShaderChunk.shadowmap_pars_fragment;
+    THREE.ShaderChunk.shadowmap_pars_fragment = on ? PCSS_CHUNK(this._chunk0) : this._chunk0;
+    this.scene.traverse(o => { const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach(x => x.needsUpdate = true); });
   }
   // size the drawing buffer to the canvas' real on-screen box (fixes tap offsets on phones)
   resize() {
@@ -139,6 +190,9 @@ export class Renderer {
     if (w === this.w && h === this.h && this._dpr === this.renderer.getPixelRatio()) return;
     this._dpr = this.renderer.getPixelRatio();
     this.renderer.setSize(w, h, false); this.composer.setPixelRatio(this._dpr); this.composer.setSize(w, h);
+    const pw = w * this._dpr, ph = h * this._dpr;
+    for (const t of [this.tiltH, this.tiltV]) t.uniforms.res.value.set(pw, ph);
+    this.grade.uniforms.res.value.set(pw, ph); this.tiltH.uniforms.amt.value = this.tiltV.uniforms.amt.value = 2.2 * this._dpr;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     this.w = w; this.h = h;
     if (this.inBattle) this.fit(); else if (this.menu) this.menuCam();
@@ -1023,6 +1077,7 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
       if (this.autoQ !== false) { if (fps < 38 && this.quality > 1) { this.lowCount++; if (this.lowCount >= 2) { this.setQuality(this.quality - 1); this.lowCount = 0; } } else this.lowCount = 0; }
       this.lastFps = fps;
     }
+    this.grade.uniforms.time.value = this.time;
     if (this.quality >= 2) this.composer.render(dt); else this.renderer.render(this.scene, this.camera);
   }
 }
