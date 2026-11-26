@@ -221,3 +221,27 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #05090f; fon
 .lifebox::before { font-size: 12px; }
 .lifebar { min-width: 18px; }
 .wavetxt { font-size: 13px; flex-shrink: 0; }
+
+/* ---- v6: upgrade / sell / build cost badges sit ON the button (unclipped wrapper) ---- */
+.cwrap { position: absolute; transform: translate(-50%, -50%); width: 62px; height: 62px; pointer-events: auto; animation: pop .15s; z-index: 6; }
+.cwrap .cbtn { position: absolute; inset: 0; transform: none; width: 62px; height: 62px; font-size: 26px; }
+.cwrap .cbtn.max { font-size: 15px; letter-spacing: .04em; }
+.cwrap .cbtn .clabel { font-size: 12px; letter-spacing: .06em; font-weight: 800; line-height: 1; }
+.cwrap .cbtn.tw { width: 62px; height: 62px; }
+.cprice { position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); z-index: 2; pointer-events: none;
+  display: flex; align-items: center; gap: 3px; padding: 1px 7px 1px 2px; border-radius: 5px;
+  background: linear-gradient(180deg, #3a2a08, #1a1204); border: 2px solid #ffe680;
+  box-shadow: 0 0 0 1px #000, 0 2px 5px rgba(0,0,0,.75), 0 0 8px rgba(255,200,40,.35);
+  color: #fff; font-size: 18px; font-weight: 800; line-height: 1.15; text-shadow: 0 1px 2px #000, 0 0 4px #000; white-space: nowrap; }
+.cprice .ico { width: 18px; height: 18px; font-size: 11px; flex-shrink: 0; box-shadow: 0 0 5px rgba(255,200,40,.8); }
+.cprice b { font-weight: 800; }
+.cwrap.dim .cbtn { filter: grayscale(.85) brightness(.55); }
+/* Keep the price readable even when the button is unaffordable — that's when the player needs it most */
+.cwrap.sell .cprice { border-color: #ffd24a; }
+.bropt .c { font-size: 20px; font-weight: 800; color: #fff; background: linear-gradient(180deg, #3a2a08, #1a1204); border: 2px solid #ffe680; border-radius: 6px; padding: 4px 8px 4px 4px; text-shadow: 0 1px 2px #000; box-shadow: 0 0 0 1px #000, 0 2px 5px rgba(0,0,0,.6); gap: 5px; }
+.bropt .c .ico { width: 20px; height: 20px; font-size: 12px; }
+.bropt .c b { font-weight: 800; }
+.bropt.ok { border-color: #46d81e; box-shadow: 0 0 10px rgba(70,216,30,.4); }
+.bropt.poor { opacity: .88; }
+/* tray build-cost chip: match the same high-contrast coin+number treatment */
+.tcard .cost { font-size: 13px; padding: 0 5px 0 2px; border-width: 1.5px; border-color: #ffe680; background: linear-gradient(180deg, #3a2a08, #1a1204); text-shadow: 0 1px 2px #000; }

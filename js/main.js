@@ -7,7 +7,7 @@ import { Renderer, makeIcons } from './render.js';
 import { initAudio, sfx, setSfx, setMusic } from './audio.js';
 
 const Q = new URLSearchParams(location.search);
-const BUILD = 'v5';
+const BUILD = 'v6';
 const DBG = { auto: Q.has('auto'), god: Q.has('god'), unlock: Q.has('unlock'), nostory: Q.has('nostory') || Q.has('auto'), speed: +Q.get('speed') || 0, q: +Q.get('q') || 0, nogov: Q.has('nogov'), perf: Q.has('perf'), easy: Q.has('easy') };
 const NL = 40;
 const $ = (s, el = document) => el.querySelector(s);
@@ -566,15 +566,29 @@ function hint(text, ms = 0) {
 function closeMenus() {
   const c = $('#ctx'); if (c) c.innerHTML = '';
   const bb = $('.branchbox'); if (bb) bb.remove();
-  sel = null; if (R.inBattle && R.rangeRing) { R.showRange(null); R.showCell(null); }
+  ctxUI = null; sel = null; if (R.inBattle && R.rangeRing) { R.showRange(null); R.showCell(null); }
 }
-function clampXY(x, y) { return [Math.max(30, Math.min(window.innerWidth - 30, x)), Math.max(70, Math.min(window.innerHeight - 40, y))]; }
-function cbtn(cls, html, x, y, fn) {
+function clampXY(x, y) { return [Math.max(40, Math.min(window.innerWidth - 40, x)), Math.max(86, Math.min(window.innerHeight - 56, y))]; }
+// Context buttons: an unclipped wrapper so the coin+cost badge can sit on the button (clip-path on .cbtn used to hide the price).
+let ctxUI = null;
+function goldBadge(v) { return `<div class="cprice"><span class="ico gold">$</span><b>${v}</b></div>`; }
+function cbtn(cls, html, x, y, fn, price) {
   const [cx, cy] = clampXY(x, y);
-  const b = h(`<div class="cbtn ${cls}" style="left:${cx}px;top:${cy}px">${html}</div>`);
-  b.onpointerdown = e => e.stopPropagation();
-  b.onclick = e => { e.stopPropagation(); fn(); };
-  $('#ctx').appendChild(b); return b;
+  const w = h(`<div class="cwrap" style="left:${cx}px;top:${cy}px"><div class="cbtn ${cls}">${html}</div>${price == null || price === '' ? '' : goldBadge(price)}</div>`);
+  w.onpointerdown = e => e.stopPropagation();
+  w.onclick = e => { e.stopPropagation(); fn(); };
+  $('#ctx').appendChild(w); return w;
+}
+function refreshCtx() {
+  if (!G || !ctxUI) return;
+  if (ctxUI.kind === 'tower') {
+    const c = upgradeCost(ctxUI.t.kind, ctxUI.t.lvl, ctxUI.t.branch);
+    if (c != null) ctxUI.up.classList.toggle('dim', G.gold < c);
+  } else if (ctxUI.kind === 'build') {
+    for (const it of ctxUI.items) it.el.classList.toggle('dim', G.gold < it.cost || G.cores < it.core);
+  } else if (ctxUI.kind === 'branch') {
+    for (const it of ctxUI.items) { const ok = G.gold >= it.cost; it.el.classList.toggle('ok', ok); it.el.classList.toggle('poor', !ok); }
+  }
 }
 function openBuildMenu(cx, cy) {
   closeMenus();
@@ -585,17 +599,20 @@ function openBuildMenu(cx, cy) {
   const [sx, sy] = R.cellScreen(cx, cy);
   const n = kinds.length, perRow = Math.min(n, 4), rows = Math.ceil(n / perRow);
   const above = sy > 220;
+  const items = [];
   kinds.forEach((k, i) => {
     const row = Math.floor(i / perRow), col = i % perRow, inRow = Math.min(perRow, n - row * perRow);
-    const x = sx + (col - (inRow - 1) / 2) * 58;
-    const y = above ? sy - 62 - (rows - 1 - row) * 64 : sy + 62 + row * 64;
-    const cost = buildCost(k, G.meta), ok = G.gold >= cost && G.cores >= (TOWERS[k].core || 0);
-    const b = cbtn('tw ' + (ok ? '' : 'dim'), `<small>${cost}${TOWERS[k].core ? '+◆' : ''}</small>`, x, y, () => {
+    const x = sx + (col - (inRow - 1) / 2) * 76;
+    const y = above ? sy - 76 - (rows - 1 - row) * 80 : sy + 76 + row * 80;
+    const cost = buildCost(k, G.meta);
+    const b = cbtn('tw', '', x, y, () => {
       if (!G.build(k, cx, cy)) { sfx.deny && sfx.deny(); hint(G.cores < (TOWERS[k].core || 0) ? 'Needs a Core (◆) — blast crosshair rocks or beat bosses' : 'Not enough gold', 1400); return; }
       sfx.build && sfx.build(); closeMenus(); tutCheck();
-    });
-    b.style.backgroundImage = `url(${ticon(k)})`;
+    }, cost + (TOWERS[k].core ? '+◆' : ''));
+    b.querySelector('.cbtn').style.backgroundImage = `url(${ticon(k)})`;
+    items.push({ el: b, cost, core: TOWERS[k].core || 0 });
   });
+  ctxUI = { kind: 'build', items }; refreshCtx();
 }
 function selectTower(t) {
   closeMenus(); sel = t;
@@ -604,22 +621,25 @@ function selectTower(t) {
   const [sx, sy] = R.toScreen(t.x, 0.4, t.z);
   const c = upgradeCost(t.kind, t.lvl, t.branch);
   const max = c == null;
-  cbtn('up ' + (max || G.gold < c ? 'dim' : ''), max ? 'MAX' : `▲<small>${c}</small>`, sx, sy - 60, () => {
+  const up = cbtn('up' + (max ? ' max' : ''), max ? 'MAX' : '▲', sx, sy - 72, () => {
     if (max) return;
     if (t.lvl === 2 && TOWERS[t.kind].branches) { openBranch(t); return; }
     if (!G.upgrade(t)) { sfx.deny && sfx.deny(); hint('Not enough gold', 1200); return; }
     sfx.upgrade && sfx.upgrade(); S.tut.up = 1; tutCheck(); selectTower(t);
-  }).style.fontSize = max ? '13px' : '';
-  cbtn('info', 'i', sx - 58, sy + 4, () => { click(); openTowerInfo(t); });
-  cbtn('sell', `$<small>+${Math.floor(t.spent * 0.5)}</small>`, sx + 58, sy + 4, () => { G.sell(t); sfx.sell && sfx.sell(); closeMenus(); });
+  }, max ? null : c);
+  cbtn('info', 'i', sx - 70, sy + 8, () => { click(); openTowerInfo(t); });
+  cbtn('sell', '<span class="clabel">SELL</span>', sx + 70, sy + 8, () => { G.sell(t); sfx.sell && sfx.sell(); closeMenus(); }, '+' + Math.floor(t.spent * 0.5));
+  ctxUI = { kind: 'tower', t, up }; refreshCtx();
 }
 function openBranch(t) {
   const T = TOWERS[t.kind];
   $('#ctx').innerHTML = '';
-  const bb = h(`<div class="branchbox panel"><h4>Choose a specialization</h4>${T.branches.map((b, i) => `<div class="bropt" data-b="${i}"><div><b>${b.name}</b><small>${b.desc}</small></div><div class="c"><span class="ico gold" style="width:16px;height:16px;font-size:9px">$</span>${b.levels[0].cost}</div></div>`).join('')}<button class="btn" id="bcancel">Cancel</button></div>`);
+  const bb = h(`<div class="branchbox panel"><h4>Choose a specialization</h4>${T.branches.map((b, i) => `<div class="bropt" data-b="${i}"><div><b>${b.name}</b><small>${b.desc}</small></div><div class="c"><span class="ico gold">$</span><b>${b.levels[0].cost}</b></div></div>`).join('')}<button class="btn" id="bcancel">Cancel</button></div>`);
   $('#hud').appendChild(bb);
   bb.querySelectorAll('.bropt').forEach(o => o.onclick = () => { if (!G.upgrade(t, +o.dataset.b)) { sfx.deny && sfx.deny(); hint('Not enough gold', 1200); return; } sfx.upgrade && sfx.upgrade(); bb.remove(); selectTower(t); });
   $('#bcancel').onclick = () => { bb.remove(); selectTower(t); };
+  ctxUI = { kind: 'branch', items: [...bb.querySelectorAll('.bropt')].map(o => ({ el: o, cost: T.branches[+o.dataset.b].levels[0].cost })) };
+  refreshCtx();
 }
 function statRows(s, kind) {
   const r = [];
@@ -797,8 +817,8 @@ function tap(sx, sy) {
 function updHUD() {
   if (!G || !hudRefs.gold) return;
   const set = (k, v, fn) => { if (lastHud[k] !== v) { lastHud[k] = v; fn(v); } };
-  set('gold', Math.floor(G.gold), v => hudRefs.gold.textContent = v);
-  set('core', G.cores, v => hudRefs.core.textContent = v);
+  set('gold', Math.floor(G.gold), v => { hudRefs.gold.textContent = v; refreshCtx(); });
+  set('core', G.cores, v => { hudRefs.core.textContent = v; refreshCtx(); });
   set('life', Math.ceil(G.life), v => { hudRefs.life.textContent = v; hudRefs.lb.firstElementChild.style.width = (100 * G.life / G.maxLife) + '%'; hudRefs.lb.classList.toggle('low', G.life / G.maxLife < 0.4); });
   set('wave', G.wave + '/' + G.nWaves, v => hudRefs.wave.textContent = 'Wave ' + v);
   // tray affordability
@@ -894,7 +914,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && scr
 
 // ---------------- boot ----------------
 window.__ap2 = {
-  get game() { return G; }, get screen() { return screen; }, R, S, startLevel, showMap, showUpg, showTitle, showInfo, showSettings,
+  get game() { return G; }, get screen() { return screen; }, R, S, startLevel, selectTower, showMap, showUpg, showTitle, showInfo, showSettings,
   setSpeed(v) { speed = v; }, pause(v) { paused = v; }, tap, save,
 };
 const ld = $('#loading'); ld.style.opacity = 0; setTimeout(() => ld.remove(), 500);
@@ -903,4 +923,4 @@ if (lv) { let i; if (lv.includes('-')) { const [a, b] = lv.split('-').map(Number
 else if (Q.get('screen')) go(Q.get('screen'));
 else showTitle();
 requestAnimationFrame(loop);
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=5').catch(() => { });
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=6').catch(() => { });
