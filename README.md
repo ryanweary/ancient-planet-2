@@ -22,15 +22,19 @@ No build step: it is static files with three@0.169 loaded from a CDN via an impo
 
 ## Graphics & asset credits
 
-The v2 visual pass renders the game with Three.js r169. It uses PBR materials, soft shadows, an HDRI environment, bloom and a per-biome colour grade.
+The HD pass renders the game with Three.js r169 and four quality tiers (Low / Med / High / Ultra, auto-detected; High on modern phones, changeable in Settings):
 
-**Textures and HDRI.** All are CC0 from [Poly Haven](https://polyhaven.com), downsized to 1024/512 px and stored in `assets/`.
+- **Terrain:** photoscanned PBR layers (albedo, normal, height, AO, roughness) per biome, height-blended splat, parallax offset on High+, wet shorelines, rounded trench paths.
+- **Lighting:** HDRI image-based lighting, PCF soft shadows (PCSS contact-hardening shadows on Ultra), N8AO ambient occlusion (High+).
+- **Water:** depth-tinted, reflective water with animated normals and shoreline foam.
+- **Vegetation:** instanced grass blades with wind (High+), baked tree impostors.
+- **Post:** bloom, ACES filmic tonemapping, colour grade with split-toning and vignette, tilt-shift depth of field (High+), film grain and chromatic aberration (Ultra), SMAA.
+- **FX:** GPU-integrated particles, beams, flares, scorch decals and screen shake.
 
-- **Textures:** rocky_terrain_02, dry_ground_01, granite_tile, aerial_rocks_02, rock_face, snow_02, coast_sand_01, burned_ground_01, brown_mud_leaves_01, forest_ground_04, concrete_floor_worn_001, metal_plate, leafy_grass.
-- **HDRI:** kloofendal_48d_partly_cloudy_puresky.
+**Textures and HDRI.** All are CC0 from [Poly Haven](https://polyhaven.com). The 24 terrain sets are in `assets/terrain/` (KTX2), a few prop textures are in `assets/tex/`, and the HDRI is `assets/sky.hdr`.
 
 **Models.** Rocks, stumps, ferns, shrubs, crates and palms are CC0 photoscans from Poly Haven. Trees are impostors baked from Poly Haven's high-poly CC0 trees. Enemies are skinned, animated CC0 models by Quaternius. All are compressed with meshopt, KTX2 and WebP. Towers and the temple base are still procedural multi-part models built in code (`js/gfx/models.js`). **See [CREDITS.md](CREDITS.md) for every asset, its author and its licence.**
 
-**Procedural textures.** The carved path slabs, armour, metal, energy dome, grass tufts and particle sprites are generated at runtime (`js/gfx/tex.js`).
+**Procedural textures.** The armour, metal, energy dome, grass tufts and particle sprites are generated at runtime (`js/gfx/tex.js`).
 
 No art, audio or code from the original Ancient Planet game is included.

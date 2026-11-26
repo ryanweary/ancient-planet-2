@@ -211,7 +211,7 @@ export class Renderer {
     this.renderer.setSize(w, h, false); this.composer.setPixelRatio(this._dpr); this.composer.setSize(w, h);
     const pw = w * this._dpr, ph = h * this._dpr;
     for (const t of [this.tiltH, this.tiltV]) t.uniforms.res.value.set(pw, ph);
-    this.grade.uniforms.res.value.set(pw, ph); this.tiltH.uniforms.amt.value = this.tiltV.uniforms.amt.value = 2.2 * this._dpr;
+    this.grade.uniforms.res.value.set(pw, ph); this.tiltH.uniforms.amt.value = this.tiltV.uniforms.amt.value = 1.6 * this._dpr;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     this.w = w; this.h = h;
     if (this.inBattle) this.fit(); else if (this.menu) this.menuCam();

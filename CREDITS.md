@@ -44,9 +44,15 @@ These are pre-rendered from the following Poly Haven models at the game's camera
 | Tree Small 02, Shrub 04 | Rico Cilliers |
 | Quiver Tree 02 | Dario Barresi, Rico Cilliers |
 
-### Textures and HDRI (`assets/tex/`, `assets/sky.hdr`)
+### PBR terrain layers (`assets/terrain/*.ktx2`)
 
-- **Textures:** rocky_terrain_02, dry_ground_01, granite_tile, aerial_rocks_02, rock_face, snow_02, coast_sand_01, burned_ground_01, brown_mud_leaves_01, forest_ground_04, concrete_floor_worn_001, metal_plate, leafy_grass, plus any terrain sets listed in the README.
+Each set is packed as KTX2/Basis ETC1S: `<name>_c` holds albedo × AO with the displacement map in alpha (used for height blending and parallax), and `<name>_n` holds the OpenGL normal map. Top and path layers are 1024 px; patch and cliff layers are 512 px.
+
+aerial_grass_rock, dirt_floor, coast_sand_01, coast_sand_05, aerial_beach_01, snow_field_aerial, snow_03, brown_mud_leaves_01, muddy_tracks, burned_ground_01, cracked_red_ground, rocks_ground_05, stone_pathway, dry_ground_rocks, concrete_floor_worn_001, gravel_road, forest_ground_04, rock_face, rock_face_03, rock_face_04, rock_pitted_mossy, dark_rock, aerial_rocks_02, metal_plate (all Poly Haven, CC0).
+
+### Other textures and HDRI (`assets/tex/`, `assets/sky.hdr`)
+
+- **Textures (prop and model materials):** granite_tile, aerial_rocks_02, rock_face, leafy_grass.
 - **HDRI:** kloofendal_48d_partly_cloudy_puresky (Greg Zaal).
 
 ## Quaternius: CC0 1.0 (public domain)
@@ -69,4 +75,5 @@ The materials are replaced at runtime with the game's rust-armour and glim-cryst
 
 ## Libraries
 
-- [three.js](https://threejs.org) r169 (MIT), including its GLTFLoader, KTX2Loader with the Basis transcoder, and the meshopt decoder.
+- [three.js](https://threejs.org) r169 (MIT), including its GLTFLoader, KTX2Loader with the Basis transcoder, the meshopt decoder, UnrealBloomPass and SMAAPass.
+- [N8AO](https://github.com/N8python/n8ao) 2.1.0 by N8python (CC0), bundled as `js/vendor/n8ao.min.js` (licence in `js/vendor/N8AO-LICENSE.txt`) for screen-space ambient occlusion.
