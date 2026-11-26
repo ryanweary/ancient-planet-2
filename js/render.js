@@ -16,7 +16,7 @@ import { C, rng } from './levels.js';
 import { cellX, cellZ } from './core.js';
 import * as TX from './gfx/tex.js';
 import { initModels, towerMesh, enemyMesh, baseMesh, decoMesh, rockPile, MAT, crystalMat, glow, rockGeo, crystalGeo } from './gfx/models.js';
-import { loadAssets, A as ASSETS, DecoBatch, TreeBatch, TREES } from './gfx/assets.js';
+import { loadAssets, A as ASSETS, DecoBatch, TreeBatch, TREES, loadTerrainLayer, decoHeight } from './gfx/assets.js';
 
 // margins (world units) around the 9x15 play grid; terrain fills the whole view
 const MX = 5, MS = 4, MN = 10;
@@ -33,6 +33,24 @@ export const BIOMES = {
   storm: { slab: 1, det: 0.35, top: 'dry_ground_01', topT: 0x9a94b0, patch: 'aerial_rocks_02', patchT: 0x8a88a8, pathT: 0xa8a4b8, cliff: 'rock_face', cliffT: 0x6a6684, sky: 0x4a4668, fog: 0x4a4668, sun: 0xe8e0ff, sunI: 2.2, hs: 0xc8c0ff, hg: 0x3a3450, hI: 0.95, water: 0x5070b8, haz: null, deco: ['shard', 'rock', 'rock', 'shard'], obst: ['shard', 'rock'], tuft: 'storm', tuftT: 0xffffff, amb: 'sparks', crystalCol: 0xc080ff, rockT: 0x6a6880, leaf: 0x3a4a40, trunk: 0x2a2a30, grade: [1.1, 1.08, [0.98, 0.97, 1.06]] },
   city: { slab: 1, det: 0.45, top: 'concrete_floor_worn_001', topT: 0xa8b0c0, patch: 'metal_plate', patchT: 0x98a8b8, pathT: 0x8a90a0, cliff: 'rock_face', cliffT: 0x707888, sky: 0x2a3048, fog: 0x2a3048, sun: 0xe0ecff, sunI: 2.3, hs: 0xc0d0ff, hg: 0x303848, hI: 1.0, water: 0x2aa8c8, haz: null, deco: ['tower', 'rock', 'tower'], obst: ['tower', 'rock'], tuft: 'city', tuftT: 0xffffff, amb: 'dust', crystalCol: 0x40f0ff, rockT: 0x707884, leaf: 0x2a3a30, trunk: 0x2a2a2a, grade: [1.08, 1.08, [0.97, 1.0, 1.06]] },
 };
+
+// PBR terrain layers per biome (Poly Haven CC0 scans, KTX2): top / patch / path / cliff, plus gentle tints, tiling and roughness
+const TERR = {
+  verdant: { b: [96, 98, 124, 100], L: ['aerial_grass_rock', 'forest_ground_04', 'dirt_floor', 'rock_face_03'], t: [0xb8f090, 0xe8e4d8, 0xe8dccc, 0xd8d2c8], s: [0.30, 0.45, 0.5, 0.45], r: [0.93, 0.96, 0.9, 0.82] },
+  reef: { b: [150, 140, 135, 120], L: ['coast_sand_01', 'aerial_beach_01', 'coast_sand_05', 'rock_face'], t: [0xfff8ee, 0xfff4e4, 0xfff0dc, 0xe8dccc], s: [0.35, 0.3, 0.5, 0.45], r: [0.9, 0.9, 0.85, 0.82] },
+  frost: { b: [190, 178, 120, 100], L: ['snow_field_aerial', 'snow_03', 'rocks_ground_05', 'rock_face_04'], t: [0xf4f8ff, 0xeef4ff, 0xc8d4e8, 0xc8d0e0], s: [0.25, 0.45, 0.5, 0.45], r: [0.7, 0.6, 0.75, 0.8] },
+  mire: { b: [88, 88, 92, 96], L: ['brown_mud_leaves_01', 'forest_ground_04', 'muddy_tracks', 'rock_pitted_mossy'], t: [0xd8e0c4, 0xc8ccb0, 0xc8bca4, 0xb8c0a8], s: [0.4, 0.45, 0.5, 0.45], r: [0.85, 0.92, 0.55, 0.8] },
+  forge: { b: [78, 84, 96, 62], L: ['burned_ground_01', 'cracked_red_ground', 'rocks_ground_05', 'dark_rock'], t: [0xe0c8bc, 0xd8b0a0, 0xc8b0a4, 0xa89890], s: [0.4, 0.4, 0.5, 0.45], r: [0.9, 0.9, 0.85, 0.75] },
+  sky: { b: [106, 140, 130, 115], L: ['aerial_grass_rock', 'coast_sand_01', 'stone_pathway', 'rock_face'], t: [0xc0f0a0, 0xfff4e4, 0xf8f4ec, 0xf0e4d4], s: [0.3, 0.4, 0.5, 0.45], r: [0.93, 0.9, 0.8, 0.82] },
+  storm: { b: [95, 90, 118, 82], L: ['dry_ground_rocks', 'aerial_rocks_02', 'stone_pathway', 'rock_face'], t: [0xc4bcd8, 0xb0acc8, 0xc8c4d8, 0x9894b0], s: [0.4, 0.4, 0.5, 0.45], r: [0.9, 0.85, 0.75, 0.8] },
+  city: { b: [112, 96, 112, 90], L: ['concrete_floor_worn_001', 'metal_plate', 'gravel_road', 'rock_face'], t: [0xd0d6e0, 0xc0c8d4, 0xc0c4cc, 0x98a0b0], s: [0.35, 0.5, 0.5, 0.45], r: [0.8, 0.5, 0.9, 0.8] },
+};
+
+// mean sRGB brightness of each packed albedo, so every layer can be normalised to its biome's target brightness
+const TLUM = { aerial_beach_01: 111, aerial_grass_rock: 67, aerial_rocks_02: 80, brown_mud_leaves_01: 74, burned_ground_01: 67, coast_sand_01: 111, coast_sand_05: 49, concrete_floor_worn_001: 84,
+  cracked_red_ground: 72, dark_rock: 27, dirt_floor: 137, dry_ground_rocks: 82, forest_ground_04: 84, gravel_road: 92, metal_plate: 46, muddy_tracks: 46, rock_face_03: 104, rock_face_04: 70,
+  rock_face: 74, rock_pitted_mossy: 152, rocks_ground_05: 98, snow_03: 104, snow_04: 110, snow_field_aerial: 133, stone_pathway: 103 };
+const terrTint = (TR, i) => new THREE.Color(TR.t[i]).multiplyScalar(Math.min(4, Math.max(0.35, Math.pow(TR.b[i] / (TLUM[TR.L[i]] || 100), 2.2))));
 
 // per-biome picks from the glTF set (names are files in assets/models)
 const GLBDECO = {
@@ -171,6 +189,7 @@ export class Renderer {
     this.smaa.enabled = q >= 2;
     this.grade.uniforms.grain.value = q >= 4 ? 0.035 : q >= 3 ? 0.018 : 0; this.grade.uniforms.ca.value = q >= 4 ? 0.012 : 0;
     if (this.grassMesh) this.grassMesh.visible = q >= 3;
+    if (this.uPar) this.uPar.value = q >= 3 ? 0.035 : 0;
     if (this.tuftMesh) this.tuftMesh.count = Math.floor(this.tuftMesh.userData.max * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.25));
     if (this.ambP) this.ambP.geometry.setDrawRange(0, Math.floor(this.ambN * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.3)));
     this._dpr = -1; this.resize();
@@ -387,8 +406,10 @@ export class Renderer {
   }
   async prepBiome(name) {
     const B = BIOMES[name]; if (B.layers) return B;
-    const [top, patch, cliff] = await Promise.all([TX.loadLayer(B.top), TX.loadLayer(B.patch), TX.loadLayer(B.cliff)]);
-    B.layers = { top, patch, cliff };
+    const TR = TERR[name] || TERR.verdant;
+    const hd = await Promise.all(TR.L.map(n => loadTerrainLayer(n)));
+    const blank = (c) => { const t = new THREE.DataTexture(new Uint8Array(c), 1, 1); t.needsUpdate = true; return t; };
+    B.layers = hd.map(l => l || { c: blank([128, 128, 128, 128]), n: blank([128, 128, 128, 128]) }); B.terr = TR;
     B.rockMat = new THREE.MeshStandardMaterial({ map: this.T.rock.d, normalMap: this.T.rock.n, color: B.rockT, roughness: 0.9, flatShading: true });
     B.leafMat = new THREE.MeshStandardMaterial({ map: this.T.leafy.d, color: B.leaf, roughness: 0.9, flatShading: true });
     B.trunkMat = new THREE.MeshStandardMaterial({ color: B.trunk, roughness: 0.9 });
@@ -440,14 +461,26 @@ export class Renderer {
       const W = P.slice();
       if (W.length > 1 && (out(W[0]) || pts[0][1] >= GH - 1 || pts[0][1] <= 0 || pts[0][0] <= 0 || pts[0][0] >= GW - 1)) W.unshift(ext(W[0], W[1]));
       const n = W.length; if (n > 1 && out(W[n - 1])) W.push(ext(W[n - 1], W[n - 2]));
-      for (let i = 0; i < W.length - 1; i++) segs.push([W[i][0], W[i][1], W[i + 1][0], W[i + 1][1]]);
+      // visual only: round the corners (one Chaikin pass, cut capped so the walk line stays well inside the trench)
+      let S = W;
+      for (let it = 0; it < 2; it++) {
+        const o = [S[0]];
+        for (let i = 1; i < S.length - 1; i++) {
+          const a = S[i - 1], b = S[i], c = S[i + 1];
+          const la = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, lc = Math.hypot(c[0] - b[0], c[1] - b[1]) || 1;
+          const ka = Math.min(0.25 * la, it ? 0.12 : 0.3) / la, kc = Math.min(0.25 * lc, it ? 0.12 : 0.3) / lc;
+          o.push([b[0] + (a[0] - b[0]) * ka, b[1] + (a[1] - b[1]) * ka], [b[0] + (c[0] - b[0]) * kc, b[1] + (c[1] - b[1]) * kc]);
+        }
+        o.push(S[S.length - 1]); S = o;
+      }
+      for (let i = 0; i < S.length - 1; i++) segs.push([S[i][0], S[i][1], S[i + 1][0], S[i + 1][1]]);
     }
     this.segs = segs;
     const segD = (x, z) => { let m = 1e9; for (const [ax, az, bx, bz] of segs) { const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1; let t = ((x - ax) * dx + (z - az) * dz) / l2; t = Math.max(0, Math.min(1, t)); const ex = ax + dx * t - x, ez = az + dz * t - z; m = Math.min(m, ex * ex + ez * ez); } return Math.sqrt(m); };
     this.segD = segD;
     const grid = this.g.grid;
     const cellAt = (cx, cy) => (cx < 0 || cy < 0 || cx >= GW || cy >= GH) ? -1 : grid[cy * GW + cx];
-    const boxSdf = (x, z, test) => { const cx = Math.round(x + (GW - 1) / 2), cy = Math.round(z + (GH - 1) / 2); let m = 9; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { if (!test(cellAt(cx + dx, cy + dy))) continue; const ox = Math.abs(x - cellX(cx + dx)) - 0.5, oz = Math.abs(z - cellZ(cy + dy)) - 0.5; const d = Math.max(ox, oz) < 0 ? Math.max(ox, oz) : Math.hypot(Math.max(ox, 0), Math.max(oz, 0)); m = Math.min(m, d); } return m; };
+    const boxSdf = (x, z, test, hs = 0.5) => { const cx = Math.round(x + (GW - 1) / 2), cy = Math.round(z + (GH - 1) / 2); let m = 9; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { if (!test(cellAt(cx + dx, cy + dy))) continue; const ox = Math.abs(x - cellX(cx + dx)) - hs, oz = Math.abs(z - cellZ(cy + dy)) - hs; const d = Math.max(ox, oz) < 0 ? Math.max(ox, oz) : Math.hypot(Math.max(ox, 0), Math.max(oz, 0)); m = Math.min(m, d); } return m; };
     const bx = cellX(L.base[0]), bz = cellZ(0.5);
     const voidHaz = B.haz === 'void';
     const ss = (a, b, v) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -472,8 +505,8 @@ export class Renderer {
       y = y * (1 - Math.max(pth, plaza)) + PATH_D * pth;
       // water / hazard basins (cell based, softened)
       if (outD < 1.2) {
-        const wd = boxSdf(x, z, v => v === C.WATER || v === C.HAZARD);
-        if (wd < 0.2) { const depth = voidHaz && B.haz ? -4 : WATER_D; const f = 1 - ss(-0.14, 0.12, wd); y = y * (1 - f) + depth * f; cellW[k] = f; }
+        const wd = boxSdf(x, z, v => v === C.WATER || v === C.HAZARD, 0.64) + (TX.fbm(x * 1.3 + 5, z * 1.3 + 2, 64, 2, 17) - 0.5) * 0.14;
+        if (wd < 0.08) { const depth = voidHaz && B.haz ? -4 : WATER_D; const f = 1 - ss(-0.13, 0.06, wd); y = y * (1 - f) + depth * f; cellW[k] = f; }
       }
       h[k] = y;
     }
@@ -495,51 +528,65 @@ export class Renderer {
     const pos = geo.attributes.position;
     for (let k = 0; k < pos.count; k++) { const i = k % nx, j = Math.floor(k / nx); pos.setY(k, h[j * nx + i]); pos.setX(k, X0 + i / res); pos.setZ(k, Z0 + j / res); }
     geo.computeVertexNormals();
-    const Ly = B.layers, T = this.T;
+    const Ly = B.layers, T = this.T, TR = B.terr;
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.93, metalness: 0 });
     this.uTime = this.uTime || { value: 0 };
-    const U = { tTop: { value: Ly.top.d }, nTop: { value: Ly.top.n }, tPatch: { value: Ly.patch.d }, nPatch: { value: Ly.patch.n }, tCliff: { value: Ly.cliff.d }, nCliff: { value: Ly.cliff.n },
-      tPath: { value: T.slabs.color }, nPath: { value: T.slabs.normal }, tSplat: { value: splat }, tMacro: { value: T.macro },
-      cTop: { value: new THREE.Color(B.topT) }, cPatch: { value: new THREE.Color(B.patchT) }, cCliff: { value: new THREE.Color(B.cliffT) }, cPath: { value: new THREE.Color(B.pathT) }, cDep: { value: new THREE.Color(0xc08a20) },
-      uSlab: { value: B.slab }, uDet: { value: B.det }, uTime: this.uTime, uOrig: { value: new THREE.Vector4(X0, Z0, EW, EH) } };
+    this.uPar = this.uPar || { value: 0.035 };
+    const U = { tTc: { value: Ly[0].c }, tTn: { value: Ly[0].n }, tPc: { value: Ly[1].c }, tPn: { value: Ly[1].n }, tSc: { value: Ly[2].c }, tSn: { value: Ly[2].n }, tCc: { value: Ly[3].c }, tCn: { value: Ly[3].n },
+      tSplat: { value: splat }, tMacro: { value: T.macro },
+      cTop: { value: terrTint(TR, 0) }, cPatch: { value: terrTint(TR, 1) }, cPath: { value: terrTint(TR, 2) }, cCliff: { value: terrTint(TR, 3) }, cDep: { value: new THREE.Color(0xc08a20) },
+      uScale: { value: new THREE.Vector4(...TR.s) }, uRough: { value: new THREE.Vector4(...TR.r) }, uPar: this.uPar, uTime: this.uTime, uOrig: { value: new THREE.Vector4(X0, Z0, EW, EH) } };
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, U);
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; varying vec3 vWN;')
         .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz; vWN = normalize(mat3(modelMatrix) * objectNormal);');
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
 varying vec3 vWP; varying vec3 vWN;
-uniform sampler2D tTop, nTop, tPatch, nPatch, tCliff, nCliff, tPath, nPath, tSplat, tMacro;
-uniform vec3 cTop, cPatch, cCliff, cPath, cDep; uniform float uTime, uSlab, uDet; uniform vec4 uOrig;
-vec4 at2(sampler2D t, vec2 uv, float m) { vec4 a = texture2D(t, uv); vec4 b = texture2D(t, vec2(uv.y, -uv.x) * 0.731 + vec2(0.37, 0.11)); return mix(a, b, m); }
-vec3 soft3(sampler2D t, vec2 uv, float m, float det) { vec3 a = at2(t, uv, m).rgb; vec3 mn = texture2D(t, uv, 12.0).rgb; return mix(mn, a, det); }`)
+uniform sampler2D tTc, tTn, tPc, tPn, tSc, tSn, tCc, tCn, tSplat, tMacro;
+uniform vec3 cTop, cPatch, cPath, cCliff, cDep; uniform vec4 uScale, uRough, uOrig; uniform float uTime, uPar;
+// anti-tiling: blend a rotated/offset second tap by a macro noise mask
+vec4 at2(sampler2D t, vec2 uv, float m) { vec4 a = texture2D(t, uv); if (m < 0.01) return a; vec4 b = texture2D(t, vec2(uv.y, -uv.x) * 0.731 + vec2(0.37, 0.11)); return mix(a, b, m); }
+vec3 unpackN(vec4 s) { vec2 xy = vec2(s.r, s.a) * 2.0 - 1.0; return vec3(xy, sqrt(max(0.05, 1.0 - dot(xy, xy)))); }
+vec3 nAt2(sampler2D t, vec2 uv, float m) { vec3 a = unpackN(texture2D(t, uv)); if (m < 0.01) return a; vec3 b = unpackN(texture2D(t, vec2(uv.y, -uv.x) * 0.731 + vec2(0.37, 0.11))); b.xy = vec2(-b.y, b.x); return normalize(mix(a, b, m)); }
+// height-aware splat blend: the layer with the taller texels wins first (rocks poke through grass, dirt fills cracks)
+float hbl(float t, float a, float b) { return smoothstep(0.2, 0.8, t * 2.2 - 0.6 + (b - a) * 0.8); }`)
         .replace('#include <map_fragment>', `
 vec2 wuv = vWP.xz;
 vec4 spl = texture2D(tSplat, (vWP.xz - uOrig.xy) / uOrig.zw);
 float mac = texture2D(tMacro, wuv * 0.045).r; float mac2 = texture2D(tMacro, wuv * 0.02 + 0.3).r;
-float am = smoothstep(0.35, 0.65, mac);
-vec2 uvT = wuv * 0.42, uvP = wuv * 0.5, uvC = vec2(wuv.x + vWP.y * 0.7, wuv.y - vWP.y * 0.4) * 0.6, uvS = (wuv + 0.5) * 0.5;
-vec3 cT = soft3(tTop, uvT, am, uDet) * cTop * mix(vec3(0.68, 0.82, 0.7), vec3(1.18, 1.12, 0.86), smoothstep(0.2, 0.8, mac2)) * (0.92 + 0.16 * mac);
-vec3 cP = soft3(tPatch, uvP, am, uDet + 0.15) * cPatch;
-vec3 cC = at2(tCliff, uvC, am).rgb * cCliff;
-vec3 cDirt = soft3(tPatch, uvP * 0.8, am, 0.7) * cPath * 1.1;
-vec3 cS = mix(cDirt, texture2D(tPath, uvS).rgb * cPath, uSlab);
+float am = smoothstep(0.42, 0.62, mac);
 float slope = 1.0 - clamp(normalize(vWN).y, 0.0, 1.0);
-float wC = smoothstep(0.1, 0.3, slope);
-float wP = smoothstep(0.55, 0.85, spl.r);
-float wG = spl.g;
-vec3 tcol = mix(cT, cP, wG); tcol = mix(tcol, cS, wP); tcol = mix(tcol, cC, wC);
+float wC = smoothstep(0.12, 0.34, slope), wP = smoothstep(0.5, 0.85, spl.r), wG = spl.g;
+// parallax offset (High+): shift lookups along the view ray by the dominant layer's height
+vec3 V = normalize(cameraPosition - vWP); vec2 pv = V.xz / max(V.y, 0.35);
+vec2 off = vec2(0.0);
+if (uPar > 0.0) { float h0 = mix(texture2D(tTc, wuv * uScale.x).a, texture2D(tSc, wuv * uScale.z).a, wP); off = pv * (h0 - 0.5) * uPar; }
+vec2 uvT = (wuv + off) * uScale.x, uvP = (wuv + off) * uScale.y, uvS = (wuv + off) * uScale.z;
+vec2 uvC = vec2(wuv.x + vWP.y * 0.7, wuv.y - vWP.y * 0.4) * uScale.w;
+vec4 sT = at2(tTc, uvT, am), sP = at2(tPc, uvP, am * 0.6), sS = texture2D(tSc, uvS), sC = texture2D(tCc, uvC);
+vec3 cT = sT.rgb * cTop * mix(vec3(0.86, 0.92, 0.88), vec3(1.08, 1.05, 0.95), smoothstep(0.2, 0.8, mac2));
+float fG = hbl(wG, sT.a, sP.a); vec3 tcol = mix(cT, sP.rgb * cPatch, fG); float hh = mix(sT.a, sP.a, fG); float rr = mix(uRough.x, uRough.y, fG);
+float fS = hbl(wP, hh, sS.a); tcol = mix(tcol, sS.rgb * cPath, fS); hh = mix(hh, sS.a, fS); rr = mix(rr, uRough.z, fS);
+float fC = hbl(wC, hh, sC.a); tcol = mix(tcol, sC.rgb * cCliff, fC); hh = mix(hh, sC.a, fC); rr = mix(rr, uRough.w, fC);
+// crevices darker and rougher, crowns a touch smoother
+tcol *= 0.82 + 0.3 * hh; rr = clamp(rr + (0.5 - hh) * 0.12, 0.3, 1.0);
 float lip = smoothstep(0.02, 0.12, spl.r) * (1.0 - smoothstep(0.14, 0.26, spl.r));
-tcol *= 1.0 + lip * 0.18;
+tcol *= 1.0 + lip * 0.1;
 float trench = smoothstep(0.22, 0.55, spl.r) * (1.0 - smoothstep(0.86, 1.0, spl.r));
-tcol *= 1.0 - 0.55 * trench;
-tcol *= mix(0.3, 1.0, spl.b);
+tcol *= 1.0 - 0.42 * trench;
+float tAO = mix(0.45, 1.0, spl.b); tcol *= mix(1.0, tAO, 0.6);
+// wet shoreline: darker, glossier just above the water line
+float wet = 1.0 - smoothstep(-0.32, -0.16, vWP.y);
+tcol *= 1.0 - 0.35 * wet; rr = mix(rr, 0.25, wet * 0.8);
 if (vWP.y < -0.3) tcol *= mix(0.55, 1.0, smoothstep(-0.55, -0.3, vWP.y));
 diffuseColor.rgb *= tcol;
-vec3 nT = at2(nTop, uvT, am).xyz * 2.0 - 1.0, nP = at2(nPatch, uvP, am).xyz * 2.0 - 1.0, nC = at2(nCliff, uvC, am).xyz * 2.0 - 1.0, nS = mix(at2(nPatch, uvP * 0.8, am).xyz, texture2D(nPath, uvS).xyz, uSlab) * 2.0 - 1.0;
-vec3 nb = mix(mix(mix(nT, nP, wG), nS, wP), nC, wC);
-vec3 Nw = normalize(vWN); vec3 Tw = normalize(vec3(1.0, 0.0, 0.0) - Nw * Nw.x); vec3 Bw = cross(Tw, Nw);
+vec3 nT = nAt2(tTn, uvT, am), nP = nAt2(tPn, uvP, am * 0.6), nS = unpackN(texture2D(tSn, uvS)), nC = unpackN(texture2D(tCn, uvC));
+vec3 nb = mix(mix(mix(nT, nP, fG), nS, fS), nC, fC); nb.xy *= 1.15 * (1.0 - wet * 0.6);
+vec3 Nw = normalize(vWN); vec3 Tw = normalize(vec3(1.0, 0.0, 0.0) - Nw * Nw.x); vec3 Bw = cross(Nw, Tw);
 vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
+        .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = rr;')
         .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(tNW, 0.0)).xyz);')
+        .replace('#include <aomap_fragment>', 'reflectedLight.indirectDiffuse *= tAO; reflectedLight.indirectSpecular *= tAO;')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += cDep * spl.a * (0.55 + 0.45 * sin(uTime * 3.0));');
     };
     const ground = new THREE.Mesh(geo, mat); ground.receiveShadow = true; ground.castShadow = true; ground.userData.own = true; ground.name = 'ground';
@@ -549,9 +596,39 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
     // water / lava / void planes
     this.water = null;
     if (B.water) {
-      const wc = new THREE.Color(B.water).multiplyScalar(0.55); const wm = new THREE.MeshStandardMaterial({ color: wc, roughness: 0.2, metalness: 0.1, normalMap: T.water, normalScale: new THREE.Vector2(0.5, 0.5), transparent: true, opacity: 0.9, emissive: wc, emissiveIntensity: 0.04, envMapIntensity: 0.45 });
-      const w = new THREE.Mesh(new THREE.PlaneGeometry(EW, EH), wm); w.rotation.x = -Math.PI / 2; w.position.set(X0 + EW / 2, WATER_Y, Z0 + EH / 2); w.receiveShadow = true; w.renderOrder = 2; this.level.add(w); this.water = w;
-      T.water.repeat.set(EW / 3, EH / 3);
+      // water: depth from the terrain heightfield drives tint, transparency and shoreline foam; low roughness reflects the HDRI sky (IBL)
+      const H = this.hf, wd = new Uint8Array(H.nx * H.nz);
+      for (let k = 0; k < wd.length; k++) wd[k] = Math.max(0, Math.min(255, (WATER_Y - H.h[k]) / 0.26 * 255));
+      const dTex = new THREE.DataTexture(wd, H.nx, H.nz, THREE.RedFormat); dTex.magFilter = dTex.minFilter = THREE.LinearFilter; dTex.needsUpdate = true;
+      const base = new THREE.Color(B.water);
+      const wm = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.06, metalness: 0.0, transparent: true, envMapIntensity: 1.7, depthWrite: false });
+      const WU = { tDepth: { value: dTex }, tWN: { value: T.water }, cShal: { value: base.clone().lerp(new THREE.Color(0xe8fff4), 0.25) }, cDeep: { value: base.clone().multiplyScalar(0.12) }, uTime: this.uTime, uOrig: { value: new THREE.Vector4(X0, Z0, EW, EH) } };
+      wm.onBeforeCompile = (sh) => {
+        Object.assign(sh.uniforms, WU);
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP2;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP2 = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+varying vec3 vWP2; uniform sampler2D tDepth, tWN; uniform vec3 cShal, cDeep; uniform float uTime; uniform vec4 uOrig;`)
+          .replace('#include <map_fragment>', `
+float dep = texture2D(tDepth, (vWP2.xz - uOrig.xy) / uOrig.zw).r;
+vec2 q = vWP2.xz;
+vec3 w1 = texture2D(tWN, q * 0.35 + vec2(uTime * 0.021, uTime * 0.013)).xyz * 2.0 - 1.0;
+vec3 w2 = texture2D(tWN, q * 0.61 * mat2(0.8, -0.6, 0.6, 0.8) - vec2(uTime * 0.017, -uTime * 0.025)).xyz * 2.0 - 1.0;
+vec3 wn = normalize(vec3(w1.xy + w2.xy, 1.4));
+float fd = smoothstep(0.0, 1.0, dep);
+vec3 wcol = mix(cShal, cDeep, sqrt(fd));
+// shoreline foam: animated bands that thin out with depth
+float fn = texture2D(tWN, q * 1.7 + vec2(uTime * 0.04, 0.0)).b;
+float band = 0.5 + 0.5 * sin(dep * 40.0 - uTime * 2.2 + fn * 6.0);
+float foam = (1.0 - smoothstep(0.0, 0.35, dep)) * smoothstep(0.45, 0.85, band * 0.6 + fn * 0.7) + (1.0 - smoothstep(0.0, 0.06, dep)) * 0.8;
+foam = clamp(foam, 0.0, 1.0);
+wcol = mix(wcol, vec3(0.95), foam * 0.85);
+diffuseColor.rgb = wcol;
+diffuseColor.a = clamp(mix(0.55, 0.96, fd) + foam * 0.5, 0.0, 1.0);`)
+          .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(0.05, 0.6, foam);')
+          .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(wn.x, wn.z, -wn.y, 0.0)).xyz);');
+      };
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(EW, EH), wm); w.rotation.x = -Math.PI / 2; w.position.set(X0 + EW / 2, WATER_Y, Z0 + EH / 2); w.receiveShadow = true; w.renderOrder = 2; this.level.add(w); this.water = w; w.userData.own = true;
+      T.water.repeat.set(1, 1); T.water.offset.set(0, 0); this.water.userData.shader = true;
     } else if (B.haz === 'lava') {
       const lm = new THREE.MeshStandardMaterial({ color: 0xff6010, emissive: 0xff4a08, emissiveIntensity: 1.6, roughness: 0.6, normalMap: T.water, normalScale: new THREE.Vector2(0.8, 0.8) });
       const w = new THREE.Mesh(new THREE.PlaneGeometry(EW, EH), lm); w.rotation.x = -Math.PI / 2; w.position.set(X0 + EW / 2, WATER_Y - 0.05, Z0 + EH / 2); this.level.add(w); this.water = w; this.water.userData.lava = true;
@@ -601,7 +678,7 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
         if (kind === 'ruin') { this.ruinAt(db, x, z, r, tint, 1 + r() * 0.5); placed++; continue; }
         if (kind === 'rock') { rockAt(x, z, 0.5 + r() * 0.9); if (r() < 0.5) rockAt(x + (r() - 0.5) * 0.9, z + (r() - 0.5) * 0.9, 0.2 + r() * 0.2, G.small); placed++; continue; }
         if (kind === 'pine' && G.trees.length) { const n = 1 + (r() < 0.45 ? 1 : 0) + (near ? 0 : (r() < 0.3 ? 1 : 0)); for (let i = 0; i < n; i++) treeAt(x + (i ? (r() - 0.5) * 0.9 : 0), z + (i ? (r() - 0.5) * 0.9 : 0), (near ? 1.1 : 1.4) + r() * 0.9); placed++; continue; }
-        if (kind === 'cover') { const n = pick(G.cover); db.add(n, x, hy - 0.02, z, r() * 6.28, (n.includes('trunk') ? 1.2 : n.includes('crate') || n.includes('barrel') ? 0.5 : n.includes('stump') ? 0.55 : 0.6) * (0.7 + r() * 0.6), n.includes('fern') || n.includes('shrub') ? G.coverTint ?? null : tint); placed++; continue; }
+        if (kind === 'cover') { const n = pick(G.cover); let sc = (n.includes('trunk') ? 1.2 : n.includes('crate') || n.includes('barrel') ? 0.5 : n.includes('stump') ? 0.55 : 0.6) * (0.7 + r() * 0.6); const dh = decoHeight(n); if (dh * sc > 0.85) sc = 0.85 / dh * (0.8 + r() * 0.3); db.add(n, x, hy - 0.02, z, r() * 6.28, sc, n.includes('fern') || n.includes('shrub') ? G.coverTint ?? null : tint); placed++; continue; }
       }
       const d = decoMesh(kind, B, r, 0.9 + r() * 0.7); d.position.set(x, hy - 0.03, z); d.rotation.y = r() * 6.28; roots.push(d); placed++;
       if (useGLB && r() < 0.6) rockAt(x + (r() - 0.5) * 0.7, z + (r() - 0.5) * 0.7, 0.25 + r() * 0.25, G.small);
@@ -623,6 +700,7 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
       tb.build(this.level, this.uTime, true, G.treeTint ?? 0xffffff);
     }
     this.buildTufts(L, B);
+    this.buildGrass(L, B);
   }
   // weathered standing stones (photoscanned rock stretched upright) with rubble at the foot
   ruinAt(db, x, z, r, tint, s) {
@@ -654,6 +732,59 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
       const k = 0.8 + r() * 0.9; q.setFromAxisAngle(up, r() * 6.28); s.set(k, k * (0.8 + r() * 0.5), k); p.set(x, y - 0.01, z); m4.compose(p, q, s); im.setMatrixAt(n++, m4);
     }
     im.count = n; im.userData.max = n; im.receiveShadow = true; im.castShadow = false; im.frustumCulled = false; this.level.add(im); this.tuftMesh = im;
+  }
+  // instanced grass blades (High+): clumps of tapered blades coloured from the ground texture under them, swaying in a travelling wind
+  buildGrass(L, B) {
+    this.grassMesh = null;
+    const GR = { verdant: 1, mire: 0.7, sky: 0.9, reef: 0.25 }[L.biome]; if (!GR) return;
+    const r = rng(L.seed + 33);
+    const blades = [];
+    for (let b = 0; b < 7; b++) {
+      const hgt = 0.09 + r() * 0.1, w = 0.012 + r() * 0.008, a = r() * 6.28, lean = (r() - 0.5) * 0.5, ox = (r() - 0.5) * 0.16, oz = (r() - 0.5) * 0.16;
+      const P = [], U = []; const seg = 3;
+      for (let i = 0; i <= seg; i++) { const t = i / seg, ww = w * (1 - t * 0.92), bend = lean * t * t * hgt; P.push([-ww, t * hgt, bend], [ww, t * hgt, bend]); U.push([0, t], [1, t]); }
+      const g = new THREE.BufferGeometry(); const pos = [], uv = [], idx = [];
+      const ca = Math.cos(a), sa = Math.sin(a);
+      P.forEach(([x, y, z]) => pos.push(ox + x * ca - z * sa, y, oz + x * sa + z * ca)); U.forEach(u => uv.push(...u));
+      for (let i = 0; i < seg; i++) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx);
+      const n = new Float32Array(pos.length); for (let i = 0; i < n.length; i += 3) { n[i] = 0.1; n[i + 1] = 1; n[i + 2] = 0.2; } g.setAttribute('normal', new THREE.BufferAttribute(n, 3));
+      blades.push(g);
+    }
+    const geo = mergeGeometries(blades);
+    const TR = B.terr, Ly = B.layers;
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0, side: THREE.DoubleSide, envMapIntensity: 0.5 });
+    const GU = { tG: { value: Ly[0].c }, uGS: { value: TR.s[0] }, cG: { value: terrTint(TR, 0) }, uTime: this.uTime };
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, GU);
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime, uGS; uniform sampler2D tG; uniform vec3 cG; varying vec3 vGC; varying float vGH;')
+        .replace('#include <begin_vertex>', `vec3 transformed = vec3(position);
+vec4 ip = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+vGC = textureLod(tG, ip.xz * uGS, 5.0).rgb * cG; vGH = clamp(position.y / 0.17, 0.0, 1.0);
+float k = vGH * vGH;
+float gust = sin(uTime * 0.9 + ip.x * 0.35 - ip.z * 0.22) * 0.5 + 0.5;
+transformed.x += (sin(uTime * 2.3 + ip.x * 1.7 + ip.z * 0.9) * 0.025 + gust * 0.045) * k;
+transformed.z += cos(uTime * 1.9 + ip.z * 1.3) * 0.018 * k;`);
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vGC; varying float vGH;')
+        .replace('#include <map_fragment>', 'diffuseColor.rgb *= mix(vGC * 0.6, vGC * 1.5 + vec3(0.03, 0.05, 0.0), vGH);')
+        .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(0.1, 1.0, 0.25, 0.0)).xyz);');
+    };
+    const max = Math.round(5200 * GR); const im = new THREE.InstancedMesh(geo, mat, max);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    const grid = this.g.grid, bx = cellX(L.base[0]), bz = cellZ(0.5);
+    let n = 0, tries = 0;
+    while (n < max && tries++ < max * 6) {
+      const x = X0 + 1 + r() * (EW - 2), z = Z0 + 3 + r() * (EH - 3); const y = this.heightAt(x, z);
+      if (y < -0.1 || this.segD(x, z) < 0.62) continue;
+      if (Math.abs(x - bx) < 1.9 && Math.abs(z - bz) < 1.6) continue;
+      if (Math.abs(this.heightAt(x + 0.15, z) - y) > 0.06 || Math.abs(this.heightAt(x, z + 0.15) - y) > 0.06) continue;
+      const cx = Math.round(x + (GW - 1) / 2), cy = Math.round(z + (GH - 1) / 2);
+      if (cx >= 0 && cy >= 0 && cx < GW && cy < GH) { const v = grid[cy * GW + cx]; if (v === C.WATER || v === C.HAZARD || v === C.ROCK || v === C.DEPOSIT) continue; }
+      const patch = TX.fbm(x * 0.22 + 3, z * 0.22 + 7, 64, 3, 21); if (patch > 0.7 && r() < 0.85) continue;
+      const k = 0.7 + r() * 0.8; q.setFromAxisAngle(up, r() * 6.28); sc.set(k, k * (0.8 + r() * 0.6), k); p.set(x, y - 0.005, z); m4.compose(p, q, sc); im.setMatrixAt(n++, m4);
+    }
+    im.count = n; im.receiveShadow = true; im.castShadow = false; im.frustumCulled = false; im.visible = this.quality >= 3; im.name = 'grass';
+    geo.userData = {}; im.userData.own = true; this.level.add(im); this.grassMesh = im;
   }
   buildAmbient(B) {
     const N = 220; this.ambN = N; const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3), ph = new Float32Array(N);
@@ -1061,7 +1192,7 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
     if (this.shield) { this.shield.visible = g.dome > 0; this.shield.material.opacity = 0.08 + 0.05 * Math.sin(this.time * 3); }
     if (this.baseGun && g.bgun) this.baseGun.rotation.y = g.bgun.aim;
     // water shimmer
-    if (this.water) { const t = this.T.water; t.offset.x = this.time * 0.02; t.offset.y = this.time * 0.013; if (this.water.userData.lava) this.water.material.emissiveIntensity = 1.4 + 0.35 * Math.sin(this.time * 1.7); }
+    if (this.water && !this.water.userData.shader) { const t = this.T.water; t.offset.x = this.time * 0.02; t.offset.y = this.time * 0.013; if (this.water.userData.lava) this.water.material.emissiveIntensity = 1.4 + 0.35 * Math.sin(this.time * 1.7); }
     // effects
     for (const e of this.effects) { e.t += dt; e.upd(e, Math.min(1, e.t / e.life)); if (e.t >= e.life) { this.dyn.remove(e.o); e.o.traverse(o => { if (o.geometry && o.geometry !== this._ucyl) o.geometry.dispose(); if (o.material && o.isSprite) o.material.dispose(); }); e.dead = true; } }
     this.effects = this.effects.filter(e => !e.dead);

@@ -56,6 +56,7 @@ function prepEnemy(gltf) {
 
 export async function loadAssets(renderer, onProgress) {
   const ktx2 = new KTX2Loader().setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/libs/basis/').detectSupport(renderer);
+  A.ktx2 = ktx2;
   const L = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).setKTX2Loader(ktx2);
   const jobs = [...Object.entries(DECO).map(([n, kb]) => ['deco', n, kb]), ...Object.entries(ENEMY).map(([n, kb]) => ['enemy', n, kb]), ['trees', 'trees', 180]];
   const total = jobs.reduce((s, j) => s + j[2], 0); const got = {};
@@ -228,4 +229,15 @@ export function glbEnemy(type, race, P) {
   const act = walk ? mixer.clipAction(walk) : null; if (act) { act.play(); act.time = Math.random() * walk.duration; }
   const death = src.clips.find(c => /Death|Dead/.test(c.name));
   return { model, mixer, act, death, mats, k };
+}
+
+// ---------- PBR terrain layers (Poly Haven, CC0): <name>_c = albedo*AO + height(alpha), <name>_n = normal (X in RGB, Y in A) ----------
+const terrCache = {};
+function ktx(url, srgb) {
+  return A.ktx2.loadAsync(url).then(t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; return t; });
+}
+export function loadTerrainLayer(name) {
+  if (!terrCache[name]) terrCache[name] = Promise.all([ktx(`assets/terrain/${name}_c.ktx2`, true), ktx(`assets/terrain/${name}_n.ktx2`, false)]).then(([c, n]) => ({ c, n }))
+    .catch(e => { console.warn('terrain', name, e); delete terrCache[name]; return null; });
+  return terrCache[name];
 }
