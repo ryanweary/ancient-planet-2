@@ -7,7 +7,7 @@ import { Renderer, makeIcons } from './render.js';
 import { initAudio, sfx, setSfx, setMusic } from './audio.js';
 
 const Q = new URLSearchParams(location.search);
-const DBG = { auto: Q.has('auto'), god: Q.has('god'), unlock: Q.has('unlock'), nostory: Q.has('nostory') || Q.has('auto'), speed: +Q.get('speed') || 0, q: +Q.get('q') || 0, easy: Q.has('easy') };
+const DBG = { auto: Q.has('auto'), god: Q.has('god'), unlock: Q.has('unlock'), nostory: Q.has('nostory') || Q.has('auto'), speed: +Q.get('speed') || 0, q: +Q.get('q') || 0, nogov: Q.has('nogov'), easy: Q.has('easy') };
 const NL = 40;
 const $ = (s, el = document) => el.querySelector(s);
 const ui = $('#ui');
@@ -42,7 +42,18 @@ const canvas = $('#c');
 const R = new Renderer(canvas);
 // auto tier: High on modern phones/desktops, Med on weak or old devices (fps watchdog still steps down)
 const autoTier = () => { const mem = navigator.deviceMemory || 4, cores = navigator.hardwareConcurrency || 4; return (mem < 3 || cores < 4) ? 2 : 3; };
-const setQ = () => { const q = DBG.q || { ultra: 4, high: 3, med: 2, low: 1 }[S.quality] || autoTier(); R.autoQ = !DBG.q && S.quality === 'auto'; R.setQuality(q); };
+// Auto remembers what the governor settled on (per device/screen) so the next session starts there instead of re-learning; picking a tier by hand clears it
+const GFX_KEY = 'ap2-gfx', gfxId = () => [screen_w(), window.devicePixelRatio || 1].join('x');
+function screen_w() { return Math.round(Math.max(window.screen.width, window.screen.height)); }
+const gfxLoad = () => { try { const g = JSON.parse(localStorage.getItem(GFX_KEY) || 'null'); return g && g.id === gfxId() ? g : null; } catch (e) { return null; } };
+const setQ = () => {
+  const auto = !DBG.q && S.quality === 'auto';
+  let q = DBG.q || { ultra: 4, high: 3, med: 2, low: 1 }[S.quality] || autoTier(), sc = 1;
+  if (auto) { const g = gfxLoad(); if (g) { q = Math.max(1, Math.min(4, g.q | 0)) || q; sc = Math.max(0.55, Math.min(1, +g.s || 1)); } else { try { localStorage.removeItem(GFX_KEY); } catch (e) { } } }
+  R.autoQ = auto && !DBG.nogov; R.setQuality(q);
+  if (sc < 1) { R.dprScale = sc; R.applyDpr(); R.resize(); }
+};
+R.onGov = (q, sc) => { try { localStorage.setItem(GFX_KEY, JSON.stringify({ id: gfxId(), q, s: Math.round(sc * 100) / 100 })); } catch (e) { } };
 setQ();
 const ldBar = document.querySelector('#loading .ld-bar i');
 const ldPct = document.querySelector('#loading .ld-pct');
@@ -359,7 +370,7 @@ function showSettings() {
     if (k === 'music') setMusic(S.music); if (k === 'sfx') setSfx(S.sfx);
     if (k === 'easy') { const mb = $('.metabar'); if (mb) mb.replaceWith(metabar()); }
   });
-  fr.querySelectorAll('.seg div').forEach(d => d.onclick = () => { S.quality = d.dataset.q; save(); setQ(); click(); fr.querySelectorAll('.seg div').forEach(x => x.classList.toggle('on', x === d)); });
+  fr.querySelectorAll('.seg div').forEach(d => d.onclick = () => { S.quality = d.dataset.q; try { localStorage.removeItem(GFX_KEY); } catch (e) { } save(); setQ(); click(); fr.querySelectorAll('.seg div').forEach(x => x.classList.toggle('on', x === d)); });
   let armed = false;
   $('#sreset').onclick = (e) => { if (!armed) { armed = true; e.target.textContent = 'Tap again to erase'; return; } const keep = { music: S.music, sfx: S.sfx, quality: S.quality }; S = Object.assign(defSave(), keep); save(); showTitle(); };
 }
@@ -417,9 +428,10 @@ function drawPanel(cv, card, wIdx, side) {
 }
 function showStory(cards, done) {
   let finished = false;
+  const prevScreen = screen;
   const finish = () => { if (finished) return; finished = true; if (el && el.parentNode) el.remove(); screen = prevScreen; try { done && done(); } catch (err) { console.warn('story done', err); } };
-  if (!cards || !cards.length) { const prevScreen = screen; finish(); return; }
-  const prevScreen = screen; screen = 'story';
+  if (!cards || !cards.length) { finish(); return; }
+  screen = 'story';
   const wIdx = STORY.indexOf(cards) >= 0 ? STORY.indexOf(cards) : 7;
   const el = h(`<div id="story"><div class="title-logo">ANCIENT PLANET <b>II</b></div><div class="comic panel"><div class="art"><canvas></canvas><div class="bubble"></div></div></div>
     <div class="progress"><i></i></div><div class="story-row"><button class="btn" id="sskip">Skip</button><button class="btn green" id="snext">Next ▶</button></div></div>`);
@@ -450,17 +462,19 @@ let hudRefs = {}, lastHud = {};
 let tutStep = 0;
 function endBattleScene() { G = null; AI = null; sel = null; placeKind = null; powerMode = null; clearFloats(); }
 let starting = false;
+const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what + ' timed out')), ms))]);
 async function startLevel(i) {
   if (starting) return; starting = true;
   try {
   const L = genLevel(i);
-  try { await R.prepBiome(L.biome); } catch (e) { console.warn('biome', e); }
+  try { await withTimeout(R.prepBiome(L.biome), 25000, 'biome load'); } catch (e) { console.warn('biome', e); }
   curIdx = i; S.plays++; save();
   G = new Game(L, { meta: metaEffects(S.owned), easy: S.easy, autoCollect: DBG.auto, god: DBG.god });
   AI = DBG.auto ? new AutoPlayer(G, { skill: 1, callEarly: true }) : null;
   paused = false; speed = DBG.speed || (DBG.auto ? 2 : 1); ended = false; endT = 0; sel = null; placeKind = null; powerMode = null;
   clearFloats();
   R.setLevel(G);
+  try { await withTimeout(R.warmup(G), 8000, 'warmup'); } catch (e) { console.warn('warmup', e); }
   screen = 'battle'; ui.innerHTML = '';
   buildHUD();
   tutStep = i === 0 && !S.tut.done && !DBG.auto ? 1 : 0;
@@ -468,7 +482,14 @@ async function startLevel(i) {
   const notes = unlockNotes(i);
   banner(`${lname(i)} ${L.name || ''}`);
   if (notes.length) setTimeout(() => G && G.L.idx === i && banner(notes[0]), 1700);
-  } catch (e) { console.error('startLevel', e); hint('Could not start this level — try again', 2000); }
+  } catch (e) {
+    console.error('startLevel', e);
+    try { localStorage.setItem('ap2-lasterr', JSON.stringify({ t: Date.now(), lvl: i, msg: String(e && e.message || e), stack: String(e && e.stack || '').slice(0, 600) })); } catch (_) { }
+    // never leave a half-built level behind: back to a clean map so the player can retry
+    endBattleScene(); try { R.showMenu(); } catch (_) { }
+    screen = 'map'; clearUI(); try { showMap(Math.floor(i / 5)); } catch (_) { }
+    hint('Could not start this level — try again', 2500);
+  }
   finally { starting = false; }
 }
 function banner(text) { const b = h(`<div class="banner">${text}</div>`); $('#hud').appendChild(b); setTimeout(() => b.remove(), 1650); }
@@ -632,13 +653,15 @@ function openPause() {
   if (!G || ended || $('.modal')) return;
   paused = true; closeMenus();
   const m = h(`<div class="modal"><div class="panel"><h2>Paused</h2><div style="margin-bottom:14px;opacity:.8">${lname(curIdx)} · Wave ${G.wave}/${G.nWaves}${S.easy ? ' · Easy' : ''}</div><div class="col">
-    <button class="btn green" id="presume">Resume</button><button class="btn" id="prestart">Restart</button><button class="btn" id="pmusic">Music: ${S.music ? 'On' : 'Off'}</button><button class="btn red" id="pmap">Quit to map</button></div></div></div>`);
+    <button class="btn green" id="presume">Resume</button><button class="btn" id="prestart">Restart</button><button class="btn" id="pmusic">Music: ${S.music ? 'On' : 'Off'}</button><button class="btn" id="pgfx">Graphics: ${gfxName()}</button><button class="btn red" id="pmap">Quit to map</button></div></div></div>`);
   ui.appendChild(m);
   $('#presume').onclick = () => { click(); m.remove(); paused = false; };
   $('#prestart').onclick = () => { click(); m.remove(); startLevel(curIdx); };
   $('#pmusic').onclick = e => { S.music = !S.music; setMusic(S.music); save(); e.target.textContent = 'Music: ' + (S.music ? 'On' : 'Off'); };
+  $('#pgfx').onclick = e => { const o = ['auto', 'ultra', 'high', 'med', 'low']; S.quality = o[(o.indexOf(S.quality) + 1) % o.length]; try { localStorage.removeItem(GFX_KEY); } catch (_) { } save(); setQ(); click(); e.target.textContent = 'Graphics: ' + gfxName(); };
   $('#pmap').onclick = () => { click(); m.remove(); showMap(Math.floor(curIdx / 5)); };
 }
+const gfxName = () => { const n = { auto: 'Auto', ultra: 'Ultra', high: 'High', med: 'Medium', low: 'Low' }[S.quality] || 'Auto'; return S.quality === 'auto' ? n + ' (' + ['', 'Low', 'Med', 'High', 'Ultra'][R.quality] + ')' : n; };
 function finishBattle() {
   const won = G.status === 'won';
   const i = curIdx; const stars = won ? Math.max(1, G.starRating() || 1) : 0;
@@ -660,7 +683,7 @@ function finishBattle() {
   const m = h(`<div class="modal"><div class="panel">${html}</div></div>`); ui.appendChild(m);
   const toMap = () => { const w = Math.floor(Math.min(NL - 1, i + (won ? 1 : 0)) / 5); showMap(w); };
   const nb = $('#rnext');
-  if (nb) nb.onclick = () => { click(); const n = i + 1, w = Math.floor(n / 5); if (n % 5 === 0 && !S.seen['w' + w] && !DBG.nostory) { m.remove(); showStory(STORY[w], () => { S.seen['w' + w] = 1; save(); startLevel(n); }); } else startLevel(n); };
+  if (nb) nb.onclick = () => { click(); const n = i + 1, w = Math.floor(n / 5); if (n % 5 === 0 && !S.seen['w' + w] && !DBG.nostory) { m.remove(); endBattleScene(); clearUI(); R.showMenu(); screen = 'map'; showStory(STORY[w], () => { S.seen['w' + w] = 1; save(); startLevel(n); }); } else startLevel(n); };
   $('#rre').onclick = () => { click(); startLevel(i); };
   $('#rupg').onclick = () => { click(); showUpg(); };
   $('#rmap').onclick = () => { click(); toMap(); };
@@ -818,8 +841,20 @@ function handleFx() {
 
 // ---------------- main loop ----------------
 let last = performance.now();
+let loopErrs = 0, hzN = 0, hzPrev = 0, hzMin = 1e9, capMs = 0, lastTick = 0;
 function loop(now) {
+  requestAnimationFrame(loop);               // queued first: an exception below can never kill the loop again
+  // 90/120Hz screens: draw at ~60fps (half the GPU work and heat, still smooth). Detected from the real rAF interval.
+  if (hzN < 90) { if (hzPrev) { hzMin = Math.min(hzMin, now - hzPrev); } hzPrev = now; if (++hzN === 90 && hzMin < 9.5) capMs = 15.5; }
+  if (capMs && now - lastTick < capMs) return;
+  lastTick = now;
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  try { tick(dt); } catch (e) {
+    if (loopErrs++ < 5) console.error('frame error', e);
+    try { localStorage.setItem('ap2-lasterr', JSON.stringify({ t: Date.now(), where: 'loop', msg: String(e && e.message || e), stack: String(e && e.stack || '').slice(0, 600) })); } catch (_) { }
+  }
+}
+function tick(dt) {
   if (screen === 'battle' && G) {
     if (!paused && !ended) {
       let sim = dt * speed;
@@ -835,7 +870,6 @@ function loop(now) {
     if (ended && endT > 0) { endT -= dt; if (endT <= 0) finishBattle(); }
   } else R.frame(dt, null, null);
   stepFloats(dt);
-  requestAnimationFrame(loop);
 }
 const doResize = () => { R.resize(); };
 window.addEventListener('resize', doResize);
@@ -855,4 +889,4 @@ if (lv) { let i; if (lv.includes('-')) { const [a, b] = lv.split('-').map(Number
 else if (Q.get('screen')) go(Q.get('screen'));
 else showTitle();
 requestAnimationFrame(loop);
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=3').catch(() => { });
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=4').catch(() => { });

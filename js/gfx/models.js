@@ -1,6 +1,7 @@
 // Detailed procedural models: towers, enemies, temple base, decoration
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { glbEnemy } from './assets.js';
 
 export const MAT = {};
@@ -75,6 +76,32 @@ function pad(t, ringCol, opts = {}) {
   const ring = M(tor(0.3, ringW, 6, 32), glow(c, 0.35 + t.lvl * 0.15), 0, 0.195, 0, Math.PI / 2); g.add(ring);
   if (t.lvl >= 2) for (let i = 0; i < t.lvl - 1; i++) { const s = M(rbox(0.06, 0.06, 0.06, 0.01), glow(c, 1.2), Math.sin(i * 1.3) * 0.22, 0.2, Math.cos(i * 1.3) * 0.22); s.castShadow = false; g.add(s); }
   return g;
+}
+// Collapse a tower's many small meshes into one draw call per (rigid frame, material): the base frame, the aiming head and each spinner stay
+// separate nodes so animation, recoil and aiming are unchanged. Merged geometry is cached per tower variant.
+const mergedC = {};
+function mergeTower(grp, anim, ckey) {
+  const frames = [grp, anim.head, ...anim.spin]; const fset = new Set(frames);
+  const tmp = new THREE.Matrix4(); const inv = new THREE.Matrix4();
+  for (let fi = 0; fi < frames.length; fi++) {
+    const frame = frames[fi]; if (!frame) continue; frame.updateMatrixWorld(true); inv.copy(frame.matrixWorld).invert();
+    const buckets = new Map(); const kill = [];
+    frame.traverse(o => {
+      if (!o.isMesh || o === anim.column || o.userData.keep) return;
+      let a = o.parent; while (a && a !== frame && !fset.has(a)) a = a.parent; if (a !== frame) return;
+      const k = o.material.uuid + (o.castShadow ? 'c' : 'n') + (o.receiveShadow ? 'r' : 'x'); let b = buckets.get(k); if (!b) buckets.set(k, b = { mat: o.material, cast: o.castShadow, recv: o.receiveShadow, list: [] });
+      b.list.push(o); kill.push(o);
+    });
+    for (const [k, b] of buckets) {
+      const gk = ckey + '|' + fi + '|' + k; let g = mergedC[gk];
+      if (!g) {
+        const gs = b.list.map(o => { const ge = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); for (const n of Object.keys(ge.attributes)) if (!['position', 'normal', 'uv'].includes(n)) ge.deleteAttribute(n); if (!ge.attributes.uv) ge.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(ge.attributes.position.count * 2), 2)); o.updateMatrixWorld(true); tmp.multiplyMatrices(inv, o.matrixWorld); ge.applyMatrix4(tmp); return ge; });
+        g = mergedC[gk] = mergeGeometries(gs); gs.forEach(x => x.dispose());
+      }
+      const m = new THREE.Mesh(g, b.mat); m.castShadow = b.cast; m.receiveShadow = b.recv; m.userData.merged = true; frame.add(m);
+    }
+    for (const o of kill) o.parent.remove(o);
+  }
 }
 export function towerMesh(t) {
   const grp = new THREE.Group(); const L = t.lvl, B = t.branch;
@@ -217,6 +244,7 @@ export function towerMesh(t) {
     const col = new THREE.Mesh(cyl(0.12, 0.15, 1.2, 20, true), MAT.column.clone()); col.position.y = 0.72; grp.add(col); anim.column = col;
     anim.noAim = true;
   }
+  mergeTower(grp, anim, `${t.kind}:${t.lvl}:${t.branch}`);
   grp.userData.anim = anim;
   return grp;
 }

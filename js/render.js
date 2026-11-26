@@ -8,6 +8,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { N8AOPass } from './vendor/n8ao.min.js';
 import { PCSS_CHUNK } from './gfx/pcss.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -118,7 +119,8 @@ function bake(roots, shadows = true) {
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    // no MSAA on the canvas: every tier renders through the composer (own AA pass), so a multisampled backbuffer would only burn bandwidth/memory
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -135,12 +137,14 @@ export class Renderer {
       this.ao.setQualityMode('Medium'); this.ao.enabled = false; this.composer.addPass(this.ao);
     } catch (e) { console.warn('n8ao', e); this.ao = null; }
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.4, 0.86);
+    { const sz = this.bloom.setSize.bind(this.bloom); this.bloom.setSize = (w, h) => sz(Math.max(2, w >> 1), Math.max(2, h >> 1)); } // bloom is blurry anyway: run its mip chain from half-res
     this.composer.addPass(this.bloom);
     this.tiltH = new ShaderPass(TiltShader); this.tiltV = new ShaderPass(TiltShader); this.tiltV.uniforms.dir.value.set(0, 1);
     this.composer.addPass(this.tiltH); this.composer.addPass(this.tiltV);
-    this.composer.addPass(new OutputPass());
+    this.outPass = new OutputPass(); this.composer.addPass(this.outPass);
     this.grade = new ShaderPass(GradeShader); this.composer.addPass(this.grade);
-    this.smaa = new SMAAPass(512, 512); this.composer.addPass(this.smaa);
+    this.fxaa = new ShaderPass(FXAAShader); this.composer.addPass(this.fxaa);   // 1 cheap pass (Low/Med/High)
+    this.smaa = new SMAAPass(512, 512); this.composer.addPass(this.smaa);        // 3 passes, Ultra only
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x4a3a20, 1.0); this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff0d0, 2.6); this.sun.position.set(-5, 13, 7); this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048); const sc = this.sun.shadow.camera; sc.left = -9; sc.right = 9; sc.top = 12; sc.bottom = -12; sc.near = 1; sc.far = 40; this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.02;
@@ -150,7 +154,7 @@ export class Renderer {
     this.ray = new THREE.Raycaster(); this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.tmap = new Map(); this.emap = new Map(); this.pmap = new Map(); this.cmap = new Map(); this.omap = new Map(); this.bmap = new Map(); this.mmap = new Map(); this.beams = new Map();
     this.effects = []; this.debris = []; this.corpses = []; this.time = 0; this.frameN = 0;
-    this.fpsAcc = 0; this.fpsN = 0; this.fpsT = 0; this.lowCount = 0;
+    this._gBad = 0; this._gAcc = 0; this._gN = 0; this._gSkip = 0; this.dprScale = 1; this.autoQ = false;
     this.w = 1; this.h = 1; this.rect = { left: 0, top: 0, width: 1, height: 1 };
     this.resize();
   }
@@ -174,26 +178,36 @@ export class Renderer {
     this.ready = true;
     this.buildMenuScene();
   }
-  // tiers: 1 Low (direct render), 2 Med (bloom+SMAA), 3 High (+N8AO half-res, tilt-shift, grass blades), 4 Ultra (+PCSS soft shadows, full-res AO, 4K shadow map, grain/CA)
-  setQuality(q) {
-    this.quality = q;
-    const dpr = Math.min(window.devicePixelRatio || 1, q >= 4 ? 2.5 : q >= 3 ? 2 : q === 2 ? 1.5 : 1);
-    this.renderer.setPixelRatio(dpr);
+  // tiers: 1 Low (render+FXAA), 2 Med (+bloom, grade, shadows), 3 High (+N8AO half-res, tilt-shift, wind grass), 4 Ultra (+PCSS soft shadows, full-res AO, 4K shadow map, SMAA, parallax, grain/CA)
+  // drawing-buffer DPR is capped by a per-tier cap AND a pixel budget (so a 3.5x flagship or a tablet never renders 4M+ pixels), then scaled by the governor's dprScale
+  setQuality(q, keepScale = false) {
+    this.quality = q; if (!keepScale) this.dprScale = 1;
+    this.shadowMapStyle(q);
     this.renderer.shadowMap.enabled = q >= 2; this.sun.castShadow = q >= 2;
     const ms = q >= 4 ? 4096 : q >= 3 ? 2048 : 1024;
     if (this.sun.shadow.mapSize.x !== ms) { this.sun.shadow.mapSize.set(ms, ms); if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; } }
     this.setPCSS(q >= 4);
     this.bloom.enabled = q >= 2;
-    if (this.ao) { this.ao.enabled = q >= 3; this.renderPass.enabled = !this.ao.enabled; this.ao.configuration.halfRes = q < 4; this.ao.setQualityMode(q >= 4 ? 'High' : 'Medium'); }
+    if (this.ao) { this.ao.enabled = q >= 3; this.renderPass.enabled = !this.ao.enabled; this.ao.configuration.halfRes = q < 4; this.ao.setQualityMode(q >= 4 ? 'Medium' : 'Low'); }
     this.tiltH.enabled = this.tiltV.enabled = q >= 3;
-    this.smaa.enabled = q >= 2;
+    this.grade.enabled = q >= 2;
+    this.fxaa.enabled = q < 4; this.smaa.enabled = q >= 4;
     this.grade.uniforms.grain.value = q >= 4 ? 0.035 : q >= 3 ? 0.018 : 0; this.grade.uniforms.ca.value = q >= 4 ? 0.012 : 0;
-    if (this.grassMesh) this.grassMesh.visible = q >= 3;
-    if (this.uPar) this.uPar.value = q >= 3 ? 0.035 : 0;
+    if (this.grassMesh) { this.grassMesh.visible = q >= 3; const f = q >= 4 ? 1 : 0.65; for (const c of this.grassMesh.userData.chunks) c.count = Math.ceil(c.userData.max * f); }
+    if (this.uPar) this.uPar.value = q >= 4 ? 0.035 : 0;
     if (this.tuftMesh) this.tuftMesh.count = Math.floor(this.tuftMesh.userData.max * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.25));
     if (this.ambP) this.ambP.geometry.setDrawRange(0, Math.floor(this.ambN * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.3)));
-    this._dpr = -1; this.resize();
+    this._dpr = -1; this.applyDpr(); this.resize(); this.wake();
   }
+  shadowMapStyle(q) { this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; }
+  // effective device-pixel ratio for the current tier and governor scale
+  targetDpr() {
+    const q = this.quality, cap = [1, 1, 1.5, 2, 2.5][q] || 2, budget = [0.7e6, 1.0e6, 1.7e6, 3.3e6][q - 1] || 1.7e6;
+    const r = this.canvas.getBoundingClientRect(); const cw = Math.max(1, r.width || window.innerWidth), ch = Math.max(1, r.height || window.innerHeight);
+    const fit = Math.sqrt(budget / (cw * ch));
+    return Math.max(0.75, Math.min(window.devicePixelRatio || 1, cap, fit) * (this.dprScale || 1));
+  }
+  applyDpr() { const d = Math.round(this.targetDpr() * 20) / 20; if (this.renderer.getPixelRatio() !== d) this.renderer.setPixelRatio(d); }
   // PCSS (percentage-closer soft shadows) for Ultra: contact-hardening penumbrae; swaps the shadow chunk and recompiles
   setPCSS(on) {
     if (this._pcss === on) return; this._pcss = on;
@@ -203,6 +217,7 @@ export class Renderer {
   }
   // size the drawing buffer to the canvas' real on-screen box (fixes tap offsets on phones)
   resize() {
+    this.applyDpr();
     const r = this.canvas.getBoundingClientRect();
     const w = Math.max(1, Math.round(r.width || window.innerWidth)), h = Math.max(1, Math.round(r.height || window.innerHeight));
     this.rect = { left: r.left, top: r.top, width: w, height: h };
@@ -211,6 +226,7 @@ export class Renderer {
     this.renderer.setSize(w, h, false); this.composer.setPixelRatio(this._dpr); this.composer.setSize(w, h);
     const pw = w * this._dpr, ph = h * this._dpr;
     for (const t of [this.tiltH, this.tiltV]) t.uniforms.res.value.set(pw, ph);
+    this.fxaa.uniforms.resolution.value.set(1 / pw, 1 / ph);
     this.grade.uniforms.res.value.set(pw, ph); this.tiltH.uniforms.amt.value = this.tiltV.uniforms.amt.value = 1.6 * this._dpr;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     this.w = w; this.h = h;
@@ -255,7 +271,7 @@ export class Renderer {
     this.applyCam();
   }
   applyCam() {
-    if (!this.pan) return;
+    if (!this.pan) return; this.wake();
     const th = Math.tan(this.camera.fov * Math.PI / 360), d = this.camDist, p = this.pitch;
     this.viewHalfW = d * th * (this.w / this.h); this.viewHalfD = d * th / Math.sin(p);
     this.panBy(0, 0);
@@ -271,7 +287,7 @@ export class Renderer {
     return { x0: -hx, x1: hx, z0: Math.min(zMin + useHalf, mid), z1: Math.max(zMax - useHalf, mid) };
   }
   panBy(dxPx, dyPx) {
-    if (!this.pan) return;
+    if (!this.pan) return; this.wake();
     const k = 2 * this.viewHalfW / this.w;
     this.pan.x -= dxPx * k; this.pan.z -= dyPx * k / Math.sin(this.pitch);
     const L = this.panLimits(); this.pan.x = Math.max(L.x0, Math.min(L.x1, this.pan.x)); this.pan.z = Math.max(L.z0, Math.min(L.z1, this.pan.z));
@@ -423,7 +439,8 @@ export class Renderer {
     this.level.visible = true; this.dyn.visible = true;
     const L = game.L, B = BIOMES[L.biome]; this.B = B;
     for (const m of [this.tmap, this.emap, this.pmap, this.cmap, this.omap, this.bmap, this.mmap, this.beams]) m.clear();
-    this.level.traverse(o => { if (o.geometry && o.userData.own) o.geometry.dispose(); });
+    this.level.traverse(o => { if (o.geometry && (o.userData.own || o.parent?.userData.own)) o.geometry.dispose(); });
+    for (const d of this._disp || []) d.dispose && d.dispose(); this._disp = [];
     this.level.clear(); this.dyn.clear(); this.effects = []; this.debris = []; this.corpses = [];
     this.dyn.add(this.points); this.dyn.add(this.points2);
     this.scene.background = new THREE.Color(B.sky);
@@ -589,6 +606,7 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
         .replace('#include <aomap_fragment>', 'reflectedLight.indirectDiffuse *= tAO; reflectedLight.indirectSpecular *= tAO;')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += cDep * spl.a * (0.55 + 0.45 * sin(uTime * 3.0));');
     };
+    (this._disp = this._disp || []).push(splat, mat);
     const ground = new THREE.Mesh(geo, mat); ground.receiveShadow = true; ground.castShadow = true; ground.userData.own = true; ground.name = 'ground';
     this.level.add(ground); this.ground = ground;
     // under-skirt so the edges never show the void
@@ -599,7 +617,7 @@ vec3 tNW = normalize(Tw * nb.x + Bw * nb.y + Nw * max(nb.z, 0.25));`)
       // water: depth from the terrain heightfield drives tint, transparency and shoreline foam; low roughness reflects the HDRI sky (IBL)
       const H = this.hf, wd = new Uint8Array(H.nx * H.nz);
       for (let k = 0; k < wd.length; k++) wd[k] = Math.max(0, Math.min(255, (WATER_Y - H.h[k]) / 0.26 * 255));
-      const dTex = new THREE.DataTexture(wd, H.nx, H.nz, THREE.RedFormat); dTex.magFilter = dTex.minFilter = THREE.LinearFilter; dTex.needsUpdate = true;
+      const dTex = new THREE.DataTexture(wd, H.nx, H.nz, THREE.RedFormat); dTex.magFilter = dTex.minFilter = THREE.LinearFilter; dTex.needsUpdate = true; this._disp.push(dTex);
       const base = new THREE.Color(B.water);
       const wm = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.06, metalness: 0.0, transparent: true, envMapIntensity: 1.7, depthWrite: false });
       const WU = { tDepth: { value: dTex }, tWN: { value: T.water }, cShal: { value: base.clone().lerp(new THREE.Color(0xe8fff4), 0.25) }, cDeep: { value: base.clone().multiplyScalar(0.12) }, uTime: this.uTime, uOrig: { value: new THREE.Vector4(X0, Z0, EW, EH) } };
@@ -627,7 +645,7 @@ diffuseColor.a = clamp(mix(0.55, 0.96, fd) + foam * 0.5, 0.0, 1.0);`)
           .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(0.05, 0.6, foam);')
           .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(wn.x, wn.z, -wn.y, 0.0)).xyz);');
       };
-      const w = new THREE.Mesh(new THREE.PlaneGeometry(EW, EH), wm); w.rotation.x = -Math.PI / 2; w.position.set(X0 + EW / 2, WATER_Y, Z0 + EH / 2); w.receiveShadow = true; w.renderOrder = 2; this.level.add(w); this.water = w; w.userData.own = true;
+      this._disp.push(wm); const w = new THREE.Mesh(new THREE.PlaneGeometry(EW, EH), wm); w.rotation.x = -Math.PI / 2; w.position.set(X0 + EW / 2, WATER_Y, Z0 + EH / 2); w.receiveShadow = true; w.renderOrder = 2; this.level.add(w); this.water = w; w.userData.own = true;
       T.water.repeat.set(1, 1); T.water.offset.set(0, 0); this.water.userData.shader = true;
     } else if (B.haz === 'lava') {
       const lm = new THREE.MeshStandardMaterial({ color: 0xff6010, emissive: 0xff4a08, emissiveIntensity: 1.6, roughness: 0.6, normalMap: T.water, normalScale: new THREE.Vector2(0.8, 0.8) });
@@ -739,9 +757,9 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
     const GR = { verdant: 1, mire: 0.7, sky: 0.9, reef: 0.25 }[L.biome]; if (!GR) return;
     const r = rng(L.seed + 33);
     const blades = [];
-    for (let b = 0; b < 7; b++) {
+    for (let b = 0; b < 6; b++) {
       const hgt = 0.09 + r() * 0.1, w = 0.012 + r() * 0.008, a = r() * 6.28, lean = (r() - 0.5) * 0.5, ox = (r() - 0.5) * 0.16, oz = (r() - 0.5) * 0.16;
-      const P = [], U = []; const seg = 3;
+      const P = [], U = []; const seg = 2;
       for (let i = 0; i <= seg; i++) { const t = i / seg, ww = w * (1 - t * 0.92), bend = lean * t * t * hgt; P.push([-ww, t * hgt, bend], [ww, t * hgt, bend]); U.push([0, t], [1, t]); }
       const g = new THREE.BufferGeometry(); const pos = [], uv = [], idx = [];
       const ca = Math.cos(a), sa = Math.sin(a);
@@ -754,6 +772,7 @@ float sw = position.y * 3.5; transformed.x += sin(uTime * 2.1 + ip.x * 1.3 + ip.
     const geo = mergeGeometries(blades);
     const TR = B.terr, Ly = B.layers;
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0, side: THREE.DoubleSide, envMapIntensity: 0.5 });
+    (this._disp = this._disp || []).push(mat);
     const GU = { tG: { value: Ly[0].c }, uGS: { value: TR.s[0] }, cG: { value: terrTint(TR, 0) }, uTime: this.uTime };
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, GU);
@@ -769,7 +788,7 @@ transformed.z += cos(uTime * 1.9 + ip.z * 1.3) * 0.018 * k;`);
         .replace('#include <map_fragment>', 'diffuseColor.rgb *= mix(vGC * 0.6, vGC * 1.5 + vec3(0.03, 0.05, 0.0), vGH);')
         .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(0.1, 1.0, 0.25, 0.0)).xyz);');
     };
-    const max = Math.round(5200 * GR); const im = new THREE.InstancedMesh(geo, mat, max);
+    const max = Math.round(5200 * GR); const cells = new Map();
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     const grid = this.g.grid, bx = cellX(L.base[0]), bz = cellZ(0.5);
     let n = 0, tries = 0;
@@ -781,10 +800,15 @@ transformed.z += cos(uTime * 1.9 + ip.z * 1.3) * 0.018 * k;`);
       const cx = Math.round(x + (GW - 1) / 2), cy = Math.round(z + (GH - 1) / 2);
       if (cx >= 0 && cy >= 0 && cx < GW && cy < GH) { const v = grid[cy * GW + cx]; if (v === C.WATER || v === C.HAZARD || v === C.ROCK || v === C.DEPOSIT) continue; }
       const patch = TX.fbm(x * 0.22 + 3, z * 0.22 + 7, 64, 3, 21); if (patch > 0.7 && r() < 0.85) continue;
-      const k = 0.7 + r() * 0.8; q.setFromAxisAngle(up, r() * 6.28); sc.set(k, k * (0.8 + r() * 0.6), k); p.set(x, y - 0.005, z); m4.compose(p, q, sc); im.setMatrixAt(n++, m4);
+      const k = 0.7 + r() * 0.8; q.setFromAxisAngle(up, r() * 6.28); sc.set(k, k * (0.8 + r() * 0.6), k); p.set(x, y - 0.005, z); m4.compose(p, q, sc); const ck = Math.floor(x / 5) + ',' + Math.floor(z / 5); let ca = cells.get(ck); if (!ca) cells.set(ck, ca = []); ca.push(m4.clone()); n++;
     }
-    im.count = n; im.receiveShadow = true; im.castShadow = false; im.frustumCulled = false; im.visible = this.quality >= 3; im.name = 'grass';
-    geo.userData = {}; im.userData.own = true; this.level.add(im); this.grassMesh = im;
+    // one chunk per 5x5 tile so off-screen grass is frustum-culled; density is scaled per tier by truncating each chunk (instances are in random order)
+    const grp = new THREE.Group(); grp.name = 'grass'; grp.visible = this.quality >= 3; grp.userData.chunks = [];
+    for (const list of cells.values()) {
+      const im = new THREE.InstancedMesh(geo, mat, list.length); list.forEach((m, i) => im.setMatrixAt(i, m)); im.userData.max = list.length;
+      im.receiveShadow = true; im.castShadow = false; im.computeBoundingSphere(); grp.add(im); grp.userData.chunks.push(im);
+    }
+    grp.userData.n = n; grp.userData.own = true; this.level.add(grp); this.grassMesh = grp;
   }
   buildAmbient(B) {
     const N = 220; this.ambN = N; const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3), ph = new Float32Array(N);
@@ -806,12 +830,13 @@ transformed.z += cos(uTime * 1.9 + ip.z * 1.3) * 0.018 * k;`);
     this.ambP.geometry.attributes.position.needsUpdate = true;
     if (type === 'fireflies' || type === 'sparks') this.ambP.material.opacity = 0.6 + 0.35 * Math.sin(t * 3);
   }
-  showRange(x, z, r) { if (r == null) { this.rangeRing.visible = false; return; } this.rangeRing.visible = true; this.rangeRing.position.set(x, Math.max(0, this.heightAt(x, z)) + 0.04, z); this.rangeRing.scale.set(r, 1, r); }
-  showCell(cx, cy, color = 0xffe060) { if (cx == null) { this.cellHL.visible = false; return; } this.cellHL.visible = true; this.cellHL.material.color.set(color); const x = cellX(cx), z = cellZ(cy); this.cellHL.position.set(x, Math.max(WATER_Y, this.heightAt(x, z)) + 0.05, z); }
+  showRange(x, z, r) { this.wake(); if (r == null) { this.rangeRing.visible = false; return; } this.rangeRing.visible = true; this.rangeRing.position.set(x, Math.max(0, this.heightAt(x, z)) + 0.04, z); this.rangeRing.scale.set(r, 1, r); }
+  showCell(cx, cy, color = 0xffe060) { this.wake(); if (cx == null) { this.cellHL.visible = false; return; } this.cellHL.visible = true; this.cellHL.material.color.set(color); const x = cellX(cx), z = cellZ(cy); this.cellHL.position.set(x, Math.max(WATER_Y, this.heightAt(x, z)) + 0.05, z); }
   showValid(cells, color = 0x80ff80) {
-    this.validHL.clear(); if (!cells) return;
-    const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, depthWrite: false, depthTest: false });
-    for (const [cx, cy] of cells) { const p = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.84), m); p.rotation.x = -Math.PI / 2; const x = cellX(cx), z = cellZ(cy); p.position.set(x, Math.max(WATER_Y, this.heightAt(x, z)) + 0.045, z); p.renderOrder = 4; this.validHL.add(p); }
+    this.wake(); this.validHL.clear(); if (!cells) return;
+    const m = this._vm || (this._vm = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, depthWrite: false, depthTest: false })); m.color.set(color);
+    const vg = this._vg || (this._vg = new THREE.PlaneGeometry(0.84, 0.84));
+    for (const [cx, cy] of cells) { const p = new THREE.Mesh(vg, m); p.rotation.x = -Math.PI / 2; const x = cellX(cx), z = cellZ(cy); p.position.set(x, Math.max(WATER_Y, this.heightAt(x, z)) + 0.045, z); p.renderOrder = 4; this.validHL.add(p); }
   }
   showPathHL(on) {
     this.pathHL.clear(); if (!on) return;
@@ -858,6 +883,7 @@ void main(){
     this.P1 = mk(3000, true, this.T.soft, false); this.P2 = mk(800, false, this.T.smoke, true);
     this.points = this.P1.p; this.points2 = this.P2.p;
     this._col = new THREE.Color();
+    this._pv = new THREE.Vector3(); this._pd = new THREE.Vector3(); this._pl = new THREE.Vector3();
   }
   emit(P, x, y, z, vx, vy, vz, color, size, life, grow = 0, grav = 0) {
     const i = P.next; P.next = (P.next + 1) % P.N;
@@ -891,19 +917,26 @@ void main(){
     this.P1.p.material.uniforms.scale.value = s * 0.5; this.P2.p.material.uniforms.scale.value = s * 0.5;
   }
   addFx(o, life, upd) { this.dyn.add(o); this.effects.push({ o, t: 0, life, upd }); }
+  // pooled effect objects: sprites / rings / pillars / scorch decals are reused instead of allocating geometry + material per shot
+  fxGet(kind, make) { const p = this._fxp || (this._fxp = {}); const a = p[kind] || (p[kind] = []); const o = a.pop() || make(); o.userData.pool = a; o.visible = true; return o; }
   flare(x, y, z, color, size, life = 0.08) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.T.flare, color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })); s.position.set(x, y, z); s.scale.setScalar(size); s.renderOrder = 9; s.material.rotation = Math.random() * 6.28;
+    const s = this.fxGet('flare', () => new THREE.Sprite(new THREE.SpriteMaterial({ map: this.T.flare, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })));
+    s.material.color.set(color); s.position.set(x, y, z); s.scale.setScalar(size); s.renderOrder = 9; s.material.rotation = Math.random() * 6.28; s.material.opacity = 1;
     this.addFx(s, life, (e, k) => { s.material.opacity = 1 - k; s.scale.setScalar(size * (1 + k * 0.6)); });
   }
   scorch(x, z, r) {
     if (this.quality < 2) return;
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: this.T.soft, color: 0x000000, transparent: true, opacity: 0.5, depthWrite: false })); m.rotation.x = -Math.PI / 2; m.position.set(x, this.heightAt(x, z) + 0.02, z); m.scale.setScalar(r * 2); m.renderOrder = 1;
+    const live = this.effects.filter(e => e.o.userData.scorch); if (live.length >= 20) { live[0].t = live[0].life; }   // cap decals: retire the oldest
+    const geo = this._sg || (this._sg = new THREE.PlaneGeometry(1, 1)); geo.userData.shared = true;
+    const m = this.fxGet('scorch', () => { const o = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: this.T.soft, color: 0x000000, transparent: true, opacity: 0.5, depthWrite: false })); o.rotation.x = -Math.PI / 2; o.userData.scorch = true; return o; });
+    m.position.set(x, this.heightAt(x, z) + 0.02, z); m.scale.setScalar(r * 2); m.renderOrder = 1; m.material.opacity = 0.5;
     this.addFx(m, 6, (e, k) => { m.material.opacity = 0.5 * (1 - k * k); });
   }
   ring(x, z, r, color, life = 0.45, y) {
     y = y ?? Math.max(WATER_Y, this.heightAt(x, z)) + 0.08;
-    const m = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    m.rotation.x = -Math.PI / 2; m.position.set(x, y, z);
+    const geo = this._rg || (this._rg = new THREE.RingGeometry(0.8, 1, 48)); geo.userData.shared = true;
+    const m = this.fxGet('ring', () => { const o = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })); o.rotation.x = -Math.PI / 2; return o; });
+    m.material.color.set(color); m.material.opacity = 0.9; m.position.set(x, y, z);
     this.addFx(m, life, (e, k) => { const s = r * (0.3 + 0.7 * Math.sqrt(k)); m.scale.set(s, s, s); m.material.opacity = 0.9 * (1 - k); });
   }
   beamFx(pts, color, life, width = 0.05, jitter = 0) {
@@ -919,30 +952,64 @@ void main(){
   }
   unitCyl() { return this._ucyl || (this._ucyl = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true).translate(0, 0.5, 0)); }
   seg(m, ax, ay, az, bx, by, bz, r) {
-    const d = new THREE.Vector3(bx - ax, by - ay, bz - az); const l = d.length() || 0.001;
-    m.position.set(ax, ay, az); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.divideScalar(l)); m.scale.set(r, l, r);
+    const d = (this._sd || (this._sd = new THREE.Vector3())).set(bx - ax, by - ay, bz - az); const l = d.length() || 0.001;
+    m.position.set(ax, ay, az); m.quaternion.setFromUnitVectors(this._up || (this._up = new THREE.Vector3(0, 1, 0)), d.divideScalar(l)); m.scale.set(r, l, r);
   }
   pillar(x, z, color, life, radius = 0.25, height = 14) {
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, 16, 1, true), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    m.position.set(x, height / 2, z);
-    this.addFx(m, life, (e, k) => { m.material.opacity = 0.9 * (1 - k); m.scale.set(1 + k, 1, 1 + k); });
+    const geo = this._pg || (this._pg = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true)); geo.userData.shared = true;
+    const m = this.fxGet('pillar', () => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })));
+    m.material.color.set(color); m.material.opacity = 0.9; m.position.set(x, height / 2, z); m.scale.set(radius, height, radius);
+    this.addFx(m, life, (e, k) => { m.material.opacity = 0.9 * (1 - k); m.scale.set(radius * (1 + k), height, radius * (1 + k)); });
   }
   breakup(m, f = 1) {
     const u = m.userData; const col = u.body ? u.body.color.clone() : new THREE.Color(0x888888); const n = Math.round((this.quality >= 3 ? 10 : this.quality === 2 ? 6 : 3) * f);
     const big = m.scale.x * (u.big || 1); const mat = u.body || MAT.dark;
     const p = new THREE.Vector3(); m.getWorldPosition(p); const y0 = p.y + (u.air ? 0.95 : 0.3);
     for (let i = 0; i < n; i++) {
-      const s = 0.04 + Math.random() * 0.07; const d = new THREE.Mesh(i % 3 ? new THREE.BoxGeometry(s, s * 0.7, s * 1.2) : new THREE.TetrahedronGeometry(s), i % 2 ? mat : MAT.dark); d.castShadow = true;
+      const s = 0.04 + Math.random() * 0.07; const dg = this._dg || (this._dg = { box: new THREE.BoxGeometry(1, 0.7, 1.2), tet: new THREE.TetrahedronGeometry(1) }); const d = new THREE.Mesh(i % 3 ? dg.box : dg.tet, i % 2 ? mat : MAT.dark); d.scale.setScalar(s); d.castShadow = false;
       d.position.set(p.x + (Math.random() - 0.5) * 0.2, y0, p.z + (Math.random() - 0.5) * 0.2);
-      d.userData = { v: new THREE.Vector3((Math.random() - 0.5) * 3, 1.5 + Math.random() * 2.5, (Math.random() - 0.5) * 3), w: new THREE.Vector3(Math.random() * 10, Math.random() * 10, 0), life: 1.1 + Math.random() * 0.5 };
+      d.userData = { s0: s, v: new THREE.Vector3((Math.random() - 0.5) * 3, 1.5 + Math.random() * 2.5, (Math.random() - 0.5) * 3), w: new THREE.Vector3(Math.random() * 10, Math.random() * 10, 0), life: 1.1 + Math.random() * 0.5 };
       this.dyn.add(d); this.debris.push(d);
     }
   }
+  // Called once per level before it is shown: builds one of everything that can appear mid-wave (every enemy type, tower kind, projectile and effect),
+  // compiles the shaders in parallel off-thread (compileAsync), then renders one hidden frame so shadow/post programs and textures are ready.
+  // Removes the first-sighting hitches (new enemy type, first muzzle flash, first explosion).
+  async warmup(game) {
+    if (!this.inBattle || !game) return;
+    const cv = this.renderer.domElement; cv.style.visibility = 'hidden';   // the probe objects must never be seen
+    try { await this._warm(game); } finally { cv.style.visibility = ''; }
+  }
+  async _warm(game) {
+    const grp = new THREE.Group(); const px = this.pan ? this.pan.x : 0, pz = this.pan ? this.pan.z : 0; grp.position.set(px, 0, pz); this.dyn.add(grp);
+    const eps = [], tws = []; let i = 0;
+    for (const t of Object.keys(ENEMIES)) for (const r of ['rust', 'glim']) { const m = this.enemyGet(t, r); m.position.set(-2 + (i % 5) * 1, 0, -2 + Math.floor(i / 5) * 1); grp.add(m); eps.push(m); i++; }
+    i = 0; for (const k of game.L.towers) { try { const m = towerMesh({ kind: k, lvl: 0, branch: -1, id: -1, x: 0, z: 0, coinT: 0, beams: [] }); m.position.set(-2 + (i % 5) * 1, 0, 2 + Math.floor(i / 5)); grp.add(m); tws.push(m); i++; } catch (e) { } }
+    const pj = ['bullet', 'bolt', 'lob', 'missile', 'shell'].map(k => { const m = this.projGet(k); m.position.set(px, 0.5, pz); this.dyn.add(m); return m; });
+    const c = [px, 0.4, pz];
+    this.flare(...c, 0xffffff, 0.3, 0.01); this.ring(px, pz, 0.5, 0xffffff, 0.01); this.pillar(px, pz, 0xffffff, 0.01, 0.1, 1); this.scorch(px, pz, 0.3);
+    this.burst(...c, 0xffffff, 4, 1, 0.1, 0.1); this.smoke(...c, 2, 0x333333, 0.3); this.beamFx([[px, 0.3, pz], [px + 0.5, 0.3, pz]], 0xffffff, 0.01, 0.03);
+    this.dyn.updateMatrixWorld(true);
+    try { if (this.renderer.extensions.has('KHR_parallel_shader_compile')) await this.renderer.compileAsync(this.scene, this.camera); else this.renderer.compile(this.scene, this.camera); } catch (e) { console.warn('compile', e); }
+    this.grade.uniforms.time.value = this.time; this.composer.render(0);
+    this.dyn.remove(grp); for (const m of eps) { grp.remove(m); this.enemyPut(m); } for (const m of pj) { this.dyn.remove(m); this.projPut(m); }
+    for (const e of this.effects) { this.dyn.remove(e.o); if (e.o.userData.pool) e.o.userData.pool.push(e.o); } this.effects = [];
+    for (const P of [this.P1, this.P2]) { P.AP.fill(0.001); for (let k = 0; k < P.N; k++) P.A0[k * 4 + 3] = -1e4; P.lo = 0; P.hi = P.N - 1; }
+  }
+  // enemy meshes are pooled per type/race: spawning reuses a skinned clone (no per-spawn skeleton/material/bone-texture allocation or first-use compile)
+  enemyGet(type, race) {
+    const key = type + '|' + race; const a = this._ep && this._ep[key]; let m = a && a.pop();
+    if (!m) { m = enemyMesh(type, race); m.scale.setScalar(1.35); m.userData.pkey = key; return m; }
+    const u = m.userData; u.fmode = undefined; u.dieT = 0; u.dead = false; u.hb.visible = false; m.visible = true;
+    if (u.mixer && u.act) { u.mixer.stopAllAction(); u.act.reset().play(); u.mixer.update(Math.random() * 1.2); }
+    return m;
+  }
+  enemyPut(m) { const k = m.userData.pkey; if (!k) return; const ep = this._ep || (this._ep = {}); const a = ep[k] || (ep[k] = []); if (a.length < 10) a.push(m); }
   stepCorpses(dt) {
     for (const m of this.corpses) {
       const u = m.userData; u.dieT += dt; u.mixer.update(dt);
       if (u.dieT > 0.9) { m.position.y -= dt * 0.5; u.sh.material = u.sh.material; }
-      if (u.dieT > 1.8) { this.dyn.remove(m); u.dead = true; }
+      if (u.dieT > 1.8) { this.dyn.remove(m); u.dead = true; this.enemyPut(m); }
     }
     this.corpses = this.corpses.filter(m => !m.userData.dead);
   }
@@ -950,14 +1017,14 @@ void main(){
     for (const d of this.debris) {
       const u = d.userData; u.life -= dt; u.v.y -= 9 * dt; d.position.addScaledVector(u.v, dt); d.rotation.x += u.w.x * dt; d.rotation.y += u.w.y * dt;
       const gy = this.heightAt(d.position.x, d.position.z) + 0.03; if (d.position.y < gy) { d.position.y = gy; u.v.y *= -0.35; u.v.x *= 0.6; u.v.z *= 0.6; u.w.multiplyScalar(0.6); }
-      if (u.life < 0.3) d.scale.setScalar(Math.max(0.01, u.life / 0.3));
-      if (u.life <= 0) { this.dyn.remove(d); d.geometry.dispose(); }
+      if (u.life < 0.3) d.scale.setScalar(u.s0 * Math.max(0.01, u.life / 0.3));
+      if (u.life <= 0) this.dyn.remove(d);
     }
     this.debris = this.debris.filter(d => d.userData.life > 0);
   }
   muzzleWorld(tm, k) {
     const a = tm && tm.userData.anim; if (!a || !a.muzzles.length) return null;
-    const mz = a.muzzles[k % a.muzzles.length]; tm.updateMatrixWorld(true); return a.head.localToWorld(new THREE.Vector3(...mz));
+    const mz = a.muzzles[k % a.muzzles.length]; tm.updateMatrixWorld(true); return a.head.localToWorld((this._mv || (this._mv = new THREE.Vector3())).set(mz[0], mz[1], mz[2]));
   }
   consumeFx(game, ui) {
     this.dies = [];
@@ -1036,16 +1103,17 @@ void main(){
     else g.add(sp(0xffffff, 0.3));
     g.traverse(o => { o.castShadow = false; }); return g;
   }
+  projGet(kind) { const a = this._pp && this._pp[kind]; const m = a && a.pop(); if (m) return m; const g = this.projMesh(kind); g.userData.kind = kind; return g; }
+  projPut(m) { const k = m.userData.kind; if (!k) return; const pp = this._pp || (this._pp = {}); const a = pp[k] || (pp[k] = []); if (a.length < 24) a.push(m); }
   syncBeam(t, tm, g) {
     let b = this.beams.get(t.id);
     if (!b) { b = new THREE.Group(); b.userData.segs = []; this.dyn.add(b); this.beams.set(t.id, b); }
-    const out = new THREE.MeshBasicMaterial({ color: 0x70d8ff, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false });
-    const core = new THREE.MeshBasicMaterial({ color: 0xeaffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
+    const bm = this._bm || (this._bm = { out: new THREE.MeshBasicMaterial({ color: 0x70d8ff, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }), core: new THREE.MeshBasicMaterial({ color: 0xeaffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }) });
     let last = [t.x, tm.position.y + (tm.userData.anim.beamY || 0.8), t.z], n = 0;
     for (const id of t.beams || []) {
       const e = g.enemies.find(o => o.id === id); if (!e) continue;
       const p = [e.x, this.heightAt(e.x, e.z) + (e.air ? 0.95 : 0.35), e.z];
-      while (b.userData.segs.length <= n) { const s = new THREE.Group(); s.add(new THREE.Mesh(this.unitCyl(), b.userData.out || (b.userData.out = out))); s.add(new THREE.Mesh(this.unitCyl(), b.userData.core || (b.userData.core = core))); b.add(s); b.userData.segs.push(s); }
+      while (b.userData.segs.length <= n) { const s = new THREE.Group(); s.add(new THREE.Mesh(this.unitCyl(), bm.out)); s.add(new THREE.Mesh(this.unitCyl(), bm.core)); b.add(s); b.userData.segs.push(s); }
       const s = b.userData.segs[n++]; s.visible = true;
       const w = 0.045 + Math.sin(this.time * 30 + n) * 0.01;
       this.seg(s.children[0], ...last, ...p, w); this.seg(s.children[1], ...last, ...p, w * 0.35);
@@ -1057,9 +1125,10 @@ void main(){
   }
   frame(dt, game, ui, sel) {
     this.time += dt; this.frameN++; if (this.uTime) this.uTime.value = this.time;
-    if (!this.inBattle) {
-      if (this.planet) { this.planet.rotation.y += dt * 0.05; this.clouds.rotation.y += dt * 0.065; }
-      if (this.ships) this.ships.forEach((s, i) => { s.position.x += dt * (0.25 + i * 0.1); if (s.position.x > 6) s.position.x = -6; });
+    if (!this.inBattle || !game) {
+      // menu scene, or (while a level is loading / a story card sits over a finished battle) the level scene with no live game to sync
+      if (!this.inBattle && this.planet) { this.planet.rotation.y += dt * 0.05; this.clouds.rotation.y += dt * 0.065; }
+      if (!this.inBattle && this.ships) this.ships.forEach((s, i) => { s.position.x += dt * (0.25 + i * 0.1); if (s.position.x > 6) s.position.x = -6; });
       this.render(dt); return;
     }
     const g = game;
@@ -1095,7 +1164,7 @@ void main(){
     for (const e of g.enemies) {
       es.add(e.id);
       let m = this.emap.get(e.id);
-      if (!m) { m = enemyMesh(e.type, e.race); m.scale.setScalar(1.35); this.dyn.add(m); this.emap.set(e.id, m); }
+      if (!m) { m = this.enemyGet(e.type, e.race); this.dyn.add(m); this.emap.set(e.id, m); }
       const gy = this.heightAt(e.x, e.z);
       m.position.set(e.x, e.air ? Math.max(gy, WATER_Y) : gy, e.z); m.rotation.y = e.rot;
       const u = m.userData; const moving = !e.blocked && g.freezeT <= 0;
@@ -1106,7 +1175,7 @@ void main(){
         // skinned walk cycle, stride synced to actual ground speed
         const base = ENEMIES[e.type].speed || 1; const v = e.speed * (1 - (e.slow || 0)) * (1 + (e.hasted || 0));
         if (u.act) u.act.timeScale = moving ? Math.max(0.35, Math.min(2.2, v / base)) * (e.type === 'swarm' ? 1.5 : 1.05) : (u.air ? 0.6 : 0.12);
-        if (this.quality >= 2 || ((this.frameN + e.id) & 1) === 0) u.mixer.update(this.quality >= 2 ? dt : dt * 2);
+        if ((this.quality >= 2 && g.enemies.length < 14) || ((this.frameN + e.id) & 1) === 0) u.mixer.update((this.quality >= 2 && g.enemies.length < 14) ? dt : dt * 2);
         if (u.air) { u.inner.position.y = 0.95 + Math.sin(this.time * 3 + e.id) * 0.08; u.inner.rotation.z = Math.sin(this.time * 2 + e.id) * 0.1; u.sh.material.opacity = 0.35; }
       } else {
         if (u.air) u.inner.position.y = 0.95 + Math.sin(this.time * 3 + e.id) * 0.08; else { u.inner.position.y = moving ? Math.abs(Math.sin(ph)) * 0.03 : 0; u.inner.rotation.z = moving ? Math.sin(ph) * 0.07 : 0; u.inner.rotation.x = moving ? 0.05 + Math.cos(ph * 2) * 0.025 : 0; }
@@ -1128,7 +1197,7 @@ void main(){
         u.dieT = 0; this.corpses.push(m); this.breakup(m, 0.5); this.emap.delete(id); continue;
       }
       if (died) this.breakup(m);
-      this.dyn.remove(m); this.emap.delete(id);
+      this.dyn.remove(m); this.emap.delete(id); this.enemyPut(m);
     }
     // projectiles
     const ps = new Set();
@@ -1136,19 +1205,19 @@ void main(){
       ps.add(p.id);
       let m = this.pmap.get(p.id);
       const y = (p.y ?? 0.5);
-      if (!m) { m = this.projMesh(p.kind); m.position.set(p.x, y, p.z); this.dyn.add(m); this.pmap.set(p.id, m); }
-      const prev = m.position.clone(); m.position.set(p.x, y, p.z);
+      if (!m) { m = this.projGet(p.kind); m.position.set(p.x, y, p.z); this.dyn.add(m); this.pmap.set(p.id, m); }
+      const prev = this._pv.copy(m.position); m.position.set(p.x, y, p.z);
       const u = m.userData;
       if (u.tr) { const dx = p.tx - p.x, dz = p.tz - p.z, l = Math.hypot(dx, dz) || 1; const tl = p.kind === 'bolt' ? 0.55 : 0.45; this.seg(u.tr, -dx / l * tl, 0, -dz / l * tl, 0, 0, 0, p.kind === 'bolt' ? 0.03 : 0.016); }
       if (u.spin) { u.spin.rotation.x += dt * 8; u.spin.rotation.y += dt * 5; if (Math.random() < 0.7) this.emit(this.P1, p.x, y, p.z, 0, 0, 0, 0x70ff50, 0.28, 0.3, 0, 0); }
       if (u.body) {
-        const d = m.position.clone().sub(prev); if (d.lengthSq() > 1e-6) u.body.lookAt(m.position.clone().add(d)), u.body.position.set(0, 0, 0);
+        const d = this._pd.copy(m.position).sub(prev); if (d.lengthSq() > 1e-6) u.body.lookAt(this._pl.copy(m.position).add(d)), u.body.position.set(0, 0, 0);
         if (u.body.parent === m) { u.body.position.set(0, 0, 0); }
         if (this.quality >= 2 || Math.random() < 0.5) { this.emit(this.P2, p.x, y, p.z, (Math.random() - 0.5) * 0.1, 0.15, (Math.random() - 0.5) * 0.1, 0x8a8a8a, 0.22, 0.8, 2, -0.15); this.emit(this.P1, p.x, y, p.z, 0, 0, 0, 0xffa040, 0.16, 0.12, 0, 0); }
       }
       if (p.kind === 'shell' && Math.random() < 0.4) this.emit(this.P2, p.x, y, p.z, 0, 0.1, 0, 0x777777, 0.12, 0.4, 1, 0);
     }
-    for (const [id, m] of this.pmap) if (!ps.has(id)) { this.dyn.remove(m); this.pmap.delete(id); }
+    for (const [id, m] of this.pmap) if (!ps.has(id)) { this.dyn.remove(m); this.pmap.delete(id); this.projPut(m); }
     // coins
     const cs = new Set();
     for (const c of g.coins) {
@@ -1212,22 +1281,44 @@ void main(){
     // water shimmer
     if (this.water && !this.water.userData.shader) { const t = this.T.water; t.offset.x = this.time * 0.02; t.offset.y = this.time * 0.013; if (this.water.userData.lava) this.water.material.emissiveIntensity = 1.4 + 0.35 * Math.sin(this.time * 1.7); }
     // effects
-    for (const e of this.effects) { e.t += dt; e.upd(e, Math.min(1, e.t / e.life)); if (e.t >= e.life) { this.dyn.remove(e.o); e.o.traverse(o => { if (o.geometry && o.geometry !== this._ucyl) o.geometry.dispose(); if (o.material && o.isSprite) o.material.dispose(); }); e.dead = true; } }
+    for (const e of this.effects) { e.t += dt; e.upd(e, Math.min(1, e.t / e.life)); if (e.t >= e.life) { this.dyn.remove(e.o); if (e.o.userData.pool) { e.o.scale.setScalar(1); e.o.userData.pool.push(e.o); } else e.o.traverse(o => { if (o.isMesh) { o.material.dispose(); if (o.geometry !== this._ucyl && !o.geometry.userData.shared) o.geometry.dispose(); } }); e.dead = true; } }
     this.effects = this.effects.filter(e => !e.dead);
     this.stepParticles(dt); this.stepDebris(dt); this.stepAmbient(dt); this.stepCorpses(dt);
     // screen shake around the fitted camera
     if (this.camBase) { if (this.shake > 0) { this.shake = Math.max(0, this.shake - dt); const s = this.shake * 0.15; this.camera.position.set(this.camBase.x + (Math.random() - 0.5) * s, this.camBase.y + (Math.random() - 0.5) * s * 0.5, this.camBase.z); } else this.camera.position.copy(this.camBase); }
     this.render(dt);
   }
+  // paused / idle scenes only need an occasional redraw; any camera or highlight change wakes full-rate rendering for a moment
+  wake() { this._wakeUntil = performance.now() + 600; }
   render(dt) {
-    this.fpsT += dt; this.fpsN++;
-    if (this.fpsT > 2) {
-      const fps = this.fpsN / this.fpsT; this.fpsT = 0; this.fpsN = 0;
-      if (this.autoQ !== false) { if (fps < 38 && this.quality > 1) { this.lowCount++; if (this.lowCount >= 2) { this.setQuality(this.quality - 1); this.lowCount = 0; } } else this.lowCount = 0; }
-      this.lastFps = fps;
-    }
+    const now = performance.now();
+    if (dt === 0 && this.inBattle && this.frameN > 8 && now > (this._wakeUntil || 0)) { if (now - (this._lastDraw || 0) < 100) return; }
+    this._lastDraw = now;
+    this.govTick(dt, now);
     this.grade.uniforms.time.value = this.time;
-    if (this.quality >= 2) this.composer.render(dt); else this.renderer.render(this.scene, this.camera);
+    this.composer.render(dt);
+  }
+  // Adaptive quality governor: judges real frame-to-frame time (what the player feels). If a ~2.4s stretch stays over ~20ms it first lowers the
+  // render resolution (dynamic DPR, down to ~1x), then drops a tier. It never steps back up on its own. onGov() lets main.js persist the result.
+  govTick(dt, now) {
+    const last = this._govLast; this._govLast = now;
+    if (!this.autoQ || dt === 0 || !this.inBattle || last == null) { this._gAcc = 0; this._gN = 0; return; }
+    const ms = now - last;
+    if (ms > 250) { this._gAcc = 0; this._gN = 0; this._gSkip = 20; return; }          // tab switch / big stall: not a steady-state sample
+    if (this._gSkip > 0) { this._gSkip--; return; }
+    this._gAcc += ms; this._gN++;
+    if (this._gAcc < 1200) return;
+    const avg = this._gAcc / this._gN; this._gAcc = 0; this._gN = 0; this.lastMs = avg; this.lastFps = 1000 / avg;
+    if (avg > 20.5) {
+      if (++this._gBad < 2) return;
+      this._gBad = 0; this._gSkip = 30;
+      const floorScale = 1 / Math.max(1, this.targetDpr() / (this.dprScale || 1));   // scale at which effective DPR hits 1
+      if ((this.dprScale || 1) > Math.max(0.55, floorScale) + 0.01) { this.dprScale = Math.max(Math.max(0.55, floorScale), (this.dprScale || 1) - 0.2); this.applyDpr(); this.resize(); }
+      else if (this.quality > 1) { this.setQuality(this.quality - 1); }
+      else return;
+      this.govSteps = (this.govSteps || 0) + 1;
+      if (this.onGov) this.onGov(this.quality, this.dprScale);
+    } else this._gBad = 0;
   }
 }
 

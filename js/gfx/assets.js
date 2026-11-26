@@ -88,21 +88,32 @@ function tinted(mat, tint) {
   if (!m) { m = mat.clone(); m.color = new THREE.Color(tint); tintC.set(k, m); }
   return m;
 }
+// spatial chunking: one InstancedMesh per CHUNK-sized tile, so frustum culling (camera and shadow camera) drops everything off screen
+const CHUNK = 5;
+const NOCAST = new Set(['fern_02', 'shrub_03', 'tree_stump_01', 'moon_rock_03', 'barrel_03']);
+function chunked(list, posOf) {
+  const m = new Map();
+  for (const it of list) { const [x, z] = posOf(it); const k = Math.floor(x / CHUNK) + ',' + Math.floor(z / CHUNK); let a = m.get(k); if (!a) m.set(k, a = []); a.push(it); }
+  return [...m.values()];
+}
 export class DecoBatch {
   constructor() { this.items = new Map(); }
   add(name, x, y, z, rotY, scale, tint = null, sy = 1) {
     if (!A.deco[name]) return false;
-    const key = name + '|' + tint; if (!this.items.has(key)) this.items.set(key, { name, tint, list: [] });
+    const cast = !NOCAST.has(name) && scale * Math.max(1, sy) >= 0.5;
+    const key = name + '|' + tint + '|' + cast; if (!this.items.has(key)) this.items.set(key, { name, tint, cast, list: [] });
     const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY), new THREE.Vector3(scale, scale * sy, scale));
     this.items.get(key).list.push(m); return true;
   }
   build(parent, shadows = true) {
     const out = [];
-    for (const { name, tint, list } of this.items.values()) {
-      for (const p of A.deco[name].parts) {
-        const im = new THREE.InstancedMesh(p.geo, tinted(p.mat, tint), list.length); im.name = 'deco:' + name;
-        list.forEach((m, i) => im.setMatrixAt(i, m)); im.castShadow = shadows; im.receiveShadow = true; im.computeBoundingSphere();
-        parent.add(im); out.push(im);
+    for (const { name, tint, cast, list: all } of this.items.values()) {
+      for (const list of chunked(all, m => [m.elements[12], m.elements[14]])) {
+        for (const p of A.deco[name].parts) {
+          const im = new THREE.InstancedMesh(p.geo, tinted(p.mat, tint), list.length); im.name = 'deco:' + name;
+          list.forEach((m, i) => im.setMatrixAt(i, m)); im.castShadow = shadows && cast; im.receiveShadow = true; im.computeBoundingSphere();
+          parent.add(im); out.push(im);
+        }
       }
     }
     return out;
@@ -160,11 +171,13 @@ export class TreeBatch {
     if (!A.trees) return;
     const tc = new THREE.Color(tint), c = new THREE.Color();
     const { treeMat, treeDepth } = treeMaterials(uTime);
-    for (const [i, list] of this.by) {
-      const im = new THREE.InstancedMesh(treeCard(i), treeMat, list.length); im.customDepthMaterial = treeDepth;
-      list.forEach((m, k) => { im.setMatrixAt(k, m); im.setColorAt(k, c.copy(tc).multiplyScalar(0.85 + ((k * 7919) % 100) / 100 * 0.25)); });
-      im.castShadow = shadows; im.receiveShadow = false; im.computeBoundingSphere();
-      parent.add(im);
+    for (const [i, all] of this.by) {
+      for (const list of chunked(all, m => [m.elements[12], m.elements[14]])) {
+        const im = new THREE.InstancedMesh(treeCard(i), treeMat, list.length); im.customDepthMaterial = treeDepth; im.name = 'tree';
+        list.forEach((m, k) => { im.setMatrixAt(k, m); im.setColorAt(k, c.copy(tc).multiplyScalar(0.85 + ((k * 7919) % 100) / 100 * 0.25)); });
+        im.castShadow = shadows; im.receiveShadow = false; im.computeBoundingSphere();
+        parent.add(im);
+      }
     }
   }
 }
