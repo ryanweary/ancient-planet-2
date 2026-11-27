@@ -186,11 +186,13 @@ export class TreeBatch {
 
 // ---------- animated enemies ----------
 const MAP = {
-  rust: { grunt: 'e_rust_grunt', swarm: 'e_spider', tank: 'e_rust_tank', flyer: 'e_rust_flyer', brute: 'e_rust_brute', boss: 'e_rust_tank' },
-  glim: { grunt: 'e_spider', swarm: 'e_spider', tank: 'e_glim_tank', flyer: 'e_glim_flyer', brute: 'e_glim_brute', boss: 'e_glim_boss' },
+  rust: { grunt: 'e_rust_grunt', swarm: 'e_spider', tank: 'e_rust_tank', flyer: 'e_rust_flyer', brute: 'e_rust_brute', boss: 'e_rust_tank', healer: 'e_rust_grunt', shield: 'e_rust_tank', splitter: 'e_rust_brute', phantom: 'e_rust_grunt' },
+  glim: { grunt: 'e_spider', swarm: 'e_spider', tank: 'e_glim_tank', flyer: 'e_glim_flyer', brute: 'e_glim_brute', boss: 'e_glim_boss', healer: 'e_spider', shield: 'e_glim_tank', splitter: 'e_glim_brute', phantom: 'e_spider' },
 };
 // target size in world units (before the renderer's global 1.35 enemy scale)
-const SIZE = { grunt: 0.52, swarm: 0.3, tank: 0.62, flyer: 0.5, brute: 0.85, boss: 1.55 };
+const SIZE = { grunt: 0.52, swarm: 0.3, tank: 0.62, flyer: 0.5, brute: 0.85, boss: 1.55, healer: 0.5, shield: 0.68, splitter: 0.72, phantom: 0.52 };
+// special enemies get a distinct body colour so they read instantly
+const TINT = { healer: 0x60ff80, shield: 0x60a0ff, splitter: 0xe060ff, phantom: 0x8060c0 };
 const CLIP = { ground: ['Walk', 'Run', 'Spider_Walk'], swarm: ['Run', 'Spider_Walk', 'Walk'], air: ['Fast_Flying', 'Flying_Idle', 'Run', 'Walk', 'Idle'] };
 export const hasEnemyGLB = (type, race) => !!A.enemy[MAP[race === 'rust' ? 'rust' : 'glim'][type]];
 
@@ -215,6 +217,7 @@ function enemyMats(src, race, type, P) {
       const l = m.color.getHSL({}).l; m.color.set(n.includes('main2') ? P.dark : P.body).multiplyScalar(0.6 + l * 0.6); m.metalness = 0.55; m.roughness = 0.38;
     } else { m.metalness = 0.6; m.roughness = 0.35; }
     if (type === 'boss') m.color.lerp(new THREE.Color(0x601010), 0.35);
+    if (TINT[type]) { m.color.lerp(new THREE.Color(TINT[type]), 0.55); m.emissive = new THREE.Color(TINT[type]).multiplyScalar(0.25); m.emissiveIntensity = 1; }
     return m;
   }
   // glim: glassy teal crystal-flesh with a fresnel rim glow
@@ -222,7 +225,8 @@ function enemyMats(src, race, type, P) {
   const l = m.color.getHSL({}).l;
   m.color.set(P.body).multiplyScalar(0.75 + l * 0.4); m.roughness = 0.18; m.metalness = 0.15; m.emissive = new THREE.Color(0x0a5a48); m.emissiveIntensity = 0.45;
   if (type === 'boss') m.color.lerp(new THREE.Color(0x60ff90), 0.25);
-  rimify(m, 0x60ffe0, 0.9);
+  if (TINT[type]) m.color.lerp(new THREE.Color(TINT[type]), 0.55);
+  rimify(m, TINT[type] || 0x60ffe0, 0.9);
   return m;
 }
 export function glbEnemy(type, race, P) {
@@ -238,6 +242,7 @@ export function glbEnemy(type, race, P) {
     const nl = list.map(s => { if (!cache.has(s)) { const m = enemyMats(s, R, type, P); cache.set(s, m); mats.push(m); } return cache.get(s); });
     o.material = Array.isArray(o.material) ? nl : nl[0];
   });
+  if (type === 'phantom' || type === 'boss') for (const m of mats) { m.transparent = true; m.opacity = 1; }
   const mixer = new THREE.AnimationMixer(model);
   const pick = (names) => { for (const nm of names) { const c = src.clips.find(c => c.name.split('|').pop() === nm); if (c) return c; } return src.clips[0]; };
   const walk = pick(type === 'swarm' ? CLIP.swarm : air ? CLIP.air : CLIP.ground);

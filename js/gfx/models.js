@@ -275,12 +275,13 @@ function glbEnemyMesh(type, race, P) {
   const G = glbEnemy(type, race, P); if (!G) return null;
   const grp = new THREE.Group(); const inner = new THREE.Group(); grp.add(inner); inner.add(G.model);
   const air = type === 'flyer'; if (air) inner.position.y = 0.95;
-  const hbY = { grunt: 0.95, swarm: 0.6, tank: 1.0, flyer: 1.45, brute: 1.5, boss: 2.5 }[type] || 1;
-  const shadowR = { grunt: 0.22, swarm: 0.16, tank: 0.36, flyer: 0.22, brute: 0.42, boss: 0.8 }[type] || 0.25;
+  const hbY = { grunt: 0.95, swarm: 0.6, tank: 1.0, flyer: 1.45, brute: 1.5, boss: 2.5, healer: 0.95, shield: 1.1, splitter: 1.3, phantom: 0.95 }[type] || 1;
+  const shadowR = { grunt: 0.22, swarm: 0.16, tank: 0.36, flyer: 0.22, brute: 0.42, boss: 0.8, healer: 0.22, shield: 0.4, splitter: 0.4, phantom: 0.22 }[type] || 0.25;
   const { sh, hb, fg } = enemyHud(grp, type, hbY, shadowR);
   const body = G.mats.find(m => !m.emissiveMap && m.emissiveIntensity < 1.2) || G.mats[0];
   const flash = G.mats.filter(m => m.emissiveIntensity < 1.2).map(m => ({ m, em: m.emissive.clone(), ei: m.emissiveIntensity }));
-  grp.userData = { inner, legs: [], spin: [], body, hb, fg, baseEm: body.emissive.clone(), baseEI: body.emissiveIntensity, air, sh, mixer: G.mixer, act: G.act, death: G.death, flash, glb: true };
+  grp.userData = { inner, legs: [], spin: [], body, hb, fg, baseEm: body.emissive.clone(), baseEI: body.emissiveIntensity, air, sh, mixer: G.mixer, act: G.act, death: G.death, flash, glb: true, mats: G.mats };
+  specialDress(grp, type, hbY);
   return grp;
 }
 export function enemyMesh(type, race) {
@@ -375,8 +376,34 @@ export function enemyMesh(type, race) {
   hb.position.y = hbY; if (type === 'boss') hb.scale.set(2.2, 1.6, 1);
   hb.visible = false; grp.add(hb);
   grp.traverse(o => { if (o.isMesh && o !== sh && o.parent !== hb) o.castShadow = type !== 'flyer'; });
-  grp.userData = { inner, legs, spin, body, hb, fg, baseEm: body.emissive.clone(), baseEI: body.emissiveIntensity, debris: R ? P.body : P.body, air: type === 'flyer', sh };
+  grp.userData = { inner, legs, spin, body, hb, fg, baseEm: body.emissive.clone(), baseEI: body.emissiveIntensity, debris: R ? P.body : P.body, air: type === 'flyer', sh, mats: [] };
+  grp.traverse(o => { if (o.isMesh && o.material && o.material.isMeshStandardMaterial && !grp.userData.mats.includes(o.material)) grp.userData.mats.push(o.material); });
+  specialDress(grp, type, hbY);
   return grp;
+}
+// readable add-ons for the special enemies: medic cross + ring, barrier dome, egg sacs, wisp aura
+const SPX = {};
+function spMat(k, make) { return SPX[k] || (SPX[k] = make()); }
+function specialDress(grp, type, hbY) {
+  const u = grp.userData, add = (o) => { o.castShadow = false; grp.add(o); return o; };
+  if (type === 'healer') {
+    const m = spMat('heal', () => new THREE.MeshBasicMaterial({ color: 0x70ff90, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const cross = new THREE.Group(); cross.add(new THREE.Mesh(geoC('hx1', () => new THREE.BoxGeometry(0.2, 0.06, 0.06)), m)); cross.add(new THREE.Mesh(geoC('hx2', () => new THREE.BoxGeometry(0.06, 0.2, 0.06)), m));
+    cross.position.y = hbY + 0.18; add(cross); u.cross = cross;
+    const ring = add(new THREE.Mesh(geoC('hring', () => new THREE.RingGeometry(0.42, 0.5, 32)), spMat('hringm', () => new THREE.MeshBasicMaterial({ color: 0x60ff80, transparent: true, opacity: 0.45, depthWrite: false }))));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; u.ring = ring;
+  } else if (type === 'shield') {
+    const dome = add(new THREE.Mesh(geoC('bdome', () => new THREE.SphereGeometry(1, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2)), spMat('bdomem', () => new THREE.MeshBasicMaterial({ color: 0x60b0ff, transparent: true, opacity: 0.13, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }))));
+    dome.scale.set(0.96, 0.55, 0.96); u.dome = dome;   // 1.3 world-unit barrier ÷ 1.35 enemy scale
+    const ring = add(new THREE.Mesh(geoC('bring', () => new THREE.RingGeometry(0.9, 0.96, 48)), spMat('bringm', () => new THREE.MeshBasicMaterial({ color: 0x80c8ff, transparent: true, opacity: 0.55, depthWrite: false }))));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; u.ring = ring;
+  } else if (type === 'splitter') {
+    const m = spMat('egg', () => new THREE.MeshStandardMaterial({ color: 0xf080ff, emissive: 0xc040ff, emissiveIntensity: 1.2, roughness: 0.3 }));
+    for (let i = 0; i < 3; i++) { const e = new THREE.Mesh(geoC('egg', () => new THREE.SphereGeometry(0.09, 10, 8)), m); e.position.set((i - 1) * 0.12, hbY - 0.35, -0.18); e.scale.y = 1.3; u.inner.add(e); }
+  } else if (type === 'phantom') {
+    const aura = add(new THREE.Mesh(geoC('paura', () => new THREE.RingGeometry(0.3, 0.42, 32)), spMat('pauram', () => new THREE.MeshBasicMaterial({ color: 0xb080ff, transparent: true, opacity: 0.4, depthWrite: false }))));
+    aura.rotation.x = -Math.PI / 2; aura.position.y = 0.05; u.ring = aura;
+  }
 }
 
 // ---------- temple base ----------

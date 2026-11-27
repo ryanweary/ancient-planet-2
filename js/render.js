@@ -1009,6 +1009,7 @@ void main(){
     const key = type + '|' + race; const a = this._ep && this._ep[key]; let m = a && a.pop();
     if (!m) { m = enemyMesh(type, race); m.scale.setScalar(1.35); m.userData.pkey = key; return m; }
     const u = m.userData; u.fmode = undefined; u.dieT = 0; u.dead = false; u.hb.visible = false; m.visible = true;
+    if (u.opac !== 1 && u.mats) { u.opac = 1; for (const mt of u.mats) if (mt.transparent) mt.opacity = 1; } if (u.bubble) u.bubble.visible = false;
     if (u.mixer && u.act) { u.mixer.stopAllAction(); u.act.reset().play(); u.mixer.update(Math.random() * 1.2); }
     return m;
   }
@@ -1088,6 +1089,17 @@ void main(){
         case 'cleared': this.burst(f.x, 0.4, f.z, 0xffa040, 24, 3, 0.3, 0.6); this.smoke(f.x, 0.3, f.z, 8, 0x5a4a3a, 0.6); this.flare(f.x, 0.4, f.z, 0xffc080, 2, 0.25); if (ui) ui.floatText(f.x, 1.0, f.z, `+${f.g} +1◆`, 'gold'); break;
         case 'leak': this.shake = 0.25; this.flash = { c: '#ff2020', a: 0.25 }; if (this.baseGroup) this.burst(this.baseGroup.position.x, 0.8, this.baseGroup.position.z, 0xff4030, 12, 2.5, 0.3, 0.5); break;
         case 'dome': this.ring(this.baseGroup.position.x, this.baseGroup.position.z, 2, 0x60e0ff, 0.6, 0.1); break;
+        case 'heal': { const y = this.heightAt(f.x, f.z); this.ring(f.x, f.z, f.r, 0x60ff80, 0.5); this.burst(f.x, y + 0.4, f.z, 0x80ff90, 8, 1.2, 0.16, 0.6, { grav: -1.5 }); break; }
+        case 'cloak': case 'uncloak': { const y = this.heightAt(f.x, f.z); this.burst(f.x, y + 0.4, f.z, 0xb080ff, 10, 1.5, 0.2, 0.4, { grav: 0 }); this.flare(f.x, y + 0.4, f.z, 0xb080ff, 0.8, 0.15); break; }
+        case 'shieldUp': { const y = this.heightAt(f.x, f.z); this.ring(f.x, f.z, 2, 0x70c0ff, 0.6); this.flare(f.x, y + 1, f.z, 0x90d0ff, 3, 0.3); if (ui) ui.floatText(f.x, 2.2, f.z, 'SHIELD!', 'crit'); break; }
+        case 'shieldBreak': { const y = this.heightAt(f.x, f.z); this.burst(f.x, y + 0.6, f.z, 0x9fd8ff, 18, 3, 0.18, 0.5, { grav: 4 }); this.flare(f.x, y + 0.6, f.z, 0xbfe8ff, 1.5, 0.15); break; }
+        case 'summon': { this.ring(f.x, f.z, 1.4, 0xc060ff, 0.5); this.burst(f.x, 0.5, f.z, 0xc080ff, 14, 2, 0.2, 0.5, { grav: 2 }); break; }
+        case 'emp': { this.ring(f.x, f.z, f.r, 0x80c0ff, 0.6, 0.15); this.ring(f.x, f.z, f.r * 0.6, 0xffffff, 0.4, 0.08); this.flare(f.x, 1, f.z, 0x80c0ff, 4, 0.3); this.shake = Math.max(this.shake || 0, 0.2); break; }
+        case 'zap': { const y = Math.max(0, this.heightAt(f.x, f.z)); this.pillar(f.x, f.z, 0x9fd0ff, 0.35, 0.12); this.pillar(f.x, f.z, 0xffffff, 0.25, 0.04); this.flare(f.x, y + 0.8, f.z, 0xbfe0ff, 2.5, 0.2); this.burst(f.x, y + 0.6, f.z, 0xbfe0ff, 16, 3, 0.14, 0.4, { grav: 3 }); this.flash = { c: '#bfe0ff', a: 0.18 }; break; }
+        case 'crateDrop': this.pillar(f.x, f.z, 0xffd060, 0.7, 0.1); break;
+        case 'dash': this.ring(f.x, f.z, 1, 0xffa040, 0.4); break;
+        case 'interest': if (ui && this.baseGroup) ui.floatText(this.baseGroup.position.x, 1.6, this.baseGroup.position.z, '+' + f.v + ' interest', 'gold'); break;
+        case 'mend': if (ui && this.baseGroup) { ui.floatText(this.baseGroup.position.x, 1.9, this.baseGroup.position.z, '+1 ♥', 'gold'); this.ring(this.baseGroup.position.x, this.baseGroup.position.z, 1.6, 0x60ff80, 0.6); } break;
       }
     }
   }
@@ -1131,6 +1143,23 @@ void main(){
     }
     for (let i = n; i < b.userData.segs.length; i++) b.userData.segs[i].visible = false;
   }
+  // per-frame visuals for cloaking, barriers, medics and boss shields
+  enemySpecial(e, m, u, gy) {
+    const op = e.cloaked ? (e.revealed ? 0.5 : 0.18) : 1;
+    if (u.opac !== op && u.mats) { u.opac = op; for (const mt of u.mats) if (mt.transparent) mt.opacity = op; }
+    if (u.cross) { u.cross.position.y = (u.hb.position.y + 0.18) + Math.sin(this.time * 4 + e.id) * 0.05; u.cross.rotation.y = this.time * 2; u.cross.quaternion; }
+    if (u.ring) { const k = 0.5 + 0.5 * Math.sin(this.time * 3 + e.id); u.ring.material.opacity = (u.dome ? 0.35 : 0.25) + 0.25 * k; }
+    if (u.dome) u.dome.rotation.y = this.time * 0.5;
+    if (e.shield > 0) {
+      if (!u.bubble) {
+        const bm = this._bubM || (this._bubM = new THREE.MeshBasicMaterial({ color: 0x4aa0ff, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending }));
+        u.bubble = new THREE.Mesh(this._bubG || (this._bubG = new THREE.IcosahedronGeometry(1, 2)), bm); u.bubble.castShadow = false; m.add(u.bubble);
+      }
+      const r = (e.type === 'boss' ? 0.75 : 0.42); u.bubble.visible = true; u.bubble.scale.setScalar(r * (1 + Math.sin(this.time * 6) * 0.03)); u.bubble.position.y = r * 0.8 + (u.air ? 0.95 : 0);
+    } else if (u.bubble) u.bubble.visible = false;
+    if (e.dash > 0 && Math.random() < 0.5) this.smoke(e.x, gy + 0.1, e.z, 1, 0x8a7a60, 0.4);
+    if (e.burn > 0 && Math.random() < 0.3) this.burst(e.x, gy + 0.3, e.z, 0x90ff50, 1, 0.6, 0.14, 0.3, { grav: -1.5 });
+  }
   _set(k) { const S = this._sets || (this._sets = {}); const s = S[k] || (S[k] = new Set()); s.clear(); return s; }   // per-frame scratch sets, reused (no GC churn)
   frame(dt, game, ui, sel) {
     this.time += dt; this.frameN++; if (this.uTime) this.uTime.value = this.time;
@@ -1165,6 +1194,7 @@ void main(){
       if (a.column) { const k = 1 - Math.min(1, (t.coinT || 0) / 14); a.column.material.opacity = 0.12 + 0.3 * k; a.column.scale.y = 0.5 + 0.7 * k; }
       if (m.userData.recoil) { m.userData.recoil = Math.max(0, m.userData.recoil - dt * 8); const r = 0.05 * m.userData.recoil; a.head.position.set(a.h0.x - Math.sin(a.head.rotation.y) * r, a.h0.y, a.h0.z - Math.cos(a.head.rotation.y) * r); }
       if (t.kind === 'cryo') this.syncBeam(t, m, g);
+      if (t.stun > 0 && Math.random() < 0.25) { this.burst(t.x, m.position.y + 0.7, t.z, 0x80c0ff, 2, 1.6, 0.12, 0.25, { grav: 2 }); if (Math.random() < 0.3) this.flare(t.x, m.position.y + 0.7, t.z, 0x9fd0ff, 0.6, 0.08); }
     }
     for (const [id, m] of this.tmap) if (!seen.has(id)) { this.dyn.remove(m); this.tmap.delete(id); }
     for (const [id, b] of this.beams) { const t = seen.has(id) && g.towers.find(o => o.id === id); if (!t || !t.beams || !t.beams.length) { b.userData.segs.forEach(s => s.visible = false); if (!seen.has(id)) { this.dyn.remove(b); this.beams.delete(id); } } }
@@ -1197,6 +1227,7 @@ void main(){
       u.hb.visible = f < 0.999;
       if (u.hb.visible) { u.fg.scale.x = Math.max(0.01, f); u.fg.position.x = -0.22 * (1 - f); u.fg.material.color.setHSL(f * 0.33, 0.95, 0.5); u.hb.quaternion.copy(m.quaternion).invert().multiply(this.camera.quaternion); }
       if (e.hasted && Math.random() < 0.1) this.burst(e.x, gy + 0.3, e.z, 0xff3030, 1, 0.5, 0.15, 0.3, { grav: -1 });
+      this.enemySpecial(e, m, u, gy);
     }
     for (const [id, m] of this.emap) if (!es.has(id)) {
       const died = this.dies && this.dies.some(d => Math.hypot(d.x - m.position.x, d.z - m.position.z) < 0.9);
@@ -1232,6 +1263,14 @@ void main(){
     for (const c of g.coins) {
       cs.add(c.id);
       let m = this.cmap.get(c.id);
+      if (!m && c.crate) {
+        m = new THREE.Group();
+        const box = new THREE.Mesh(this._crGeo || (this._crGeo = new THREE.BoxGeometry(0.42, 0.34, 0.42)), this._crMat || (this._crMat = new THREE.MeshStandardMaterial({ color: 0x5a6a7a, metalness: 0.6, roughness: 0.4 })));
+        box.castShadow = true; m.add(box);
+        const band = new THREE.Mesh(this._crbG || (this._crbG = new THREE.BoxGeometry(0.44, 0.08, 0.44)), this._coinMat || (this._coinMat = new THREE.MeshStandardMaterial({ color: 0xffc020, emissive: 0xc07800, emissiveIntensity: 0.8, metalness: 0.9, roughness: 0.25 }))); m.add(band);
+        const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.T.flare, color: 0xffd060, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.8 })); gl.scale.setScalar(1.4); m.add(gl);
+        m.userData.crate = true; this.dyn.add(m); this.cmap.set(c.id, m);
+      }
       if (!m) {
         m = new THREE.Group();
         const cm = this._coinMat || (this._coinMat = new THREE.MeshStandardMaterial({ color: 0xffc020, emissive: 0xc07800, emissiveIntensity: 0.8, metalness: 0.9, roughness: 0.25 }));
@@ -1240,7 +1279,8 @@ void main(){
         const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.T.flare, color: 0xffd060, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.7 })); gl.scale.setScalar(0.9); m.add(gl);
         this.dyn.add(m); this.cmap.set(c.id, m);
       }
-      m.position.set(c.x, 0.65 + Math.sin(this.time * 4 + c.id) * 0.08, c.z); m.rotation.y = this.time * 3;
+      if (m.userData.crate) { const fall = Math.max(0, 1 - c.t / 0.6); m.position.set(c.x, Math.max(0, this.heightAt(c.x, c.z)) + 0.2 + fall * fall * 8, c.z); m.rotation.y = this.time * 0.8; }
+      else { m.position.set(c.x, 0.65 + Math.sin(this.time * 4 + c.id) * 0.08, c.z); m.rotation.y = this.time * 3; }
       m.visible = c.life - c.t > 3 || Math.sin(this.time * 20) > 0;
     }
     for (const [id, m] of this.cmap) if (!cs.has(id)) { this.dyn.remove(m); this.cmap.delete(id); }
@@ -1358,7 +1398,7 @@ export function makeIcons(towerKinds, enemyTypes) {
   const rb = grad('#5a3a26', '#1e140e'), gb = grad('#1e5a52', '#0a1e1c');
   for (const [type, race] of enemyTypes) {
     const m = enemyMesh(type, race); if (m.userData.mixer) m.userData.mixer.update(0.35); if (m.userData.hb) m.userData.hb.visible = false; if (m.userData.sh) m.userData.sh.visible = false; m.rotation.y = 0.6;
-    const big = type === 'boss' ? 2.4 : type === 'brute' ? 1.6 : type === 'tank' ? 1.3 : 1;
+    const big = type === 'boss' ? 2.4 : type === 'brute' || type === 'splitter' ? 1.6 : type === 'tank' || type === 'shield' ? 1.3 : 1;
     out['e_' + type + '_' + race] = shot(m, race === 'rust' ? rb : gb, (ENEMIES[type].air ? 0.9 : 0.35) * Math.min(big, 1.6), 1.6 * big);
   }
   r.dispose(); try { r.forceContextLoss(); } catch (e) { }

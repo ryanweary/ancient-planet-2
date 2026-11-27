@@ -1,4 +1,4 @@
-import { GW, GH, WORLDS, UNLOCKS, ENEMIES } from './data.js';
+import { GW, GH, WORLDS, UNLOCKS, ENEMIES, ENEMY_UNLOCK, BOSS_ABIL } from './data.js';
 
 export function rng(seed) {
   let a = seed >>> 0;
@@ -46,11 +46,34 @@ function genMainPath(r, world, bx) {
 
 export function plen(pts) { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return s; }
 
-export function genLevel(idx) {
+// Twists per level: deterministic, themed by biome. World 1 has none; later worlds stack more.
+const TWIST_POOL = {
+  verdant: ['supply', 'goldrush'], reef: ['supply', 'goldrush', 'fog', 'airraid'], frost: ['fog', 'armored', 'regen', 'swift'],
+  mire: ['fog', 'regen', 'horde', 'bounty'], forge: ['armored', 'bounty', 'horde', 'scarce'], sky: ['airraid', 'swift', 'supply', 'scarce'],
+  storm: ['storm', 'airraid', 'swift', 'regen'], city: ['storm', 'armored', 'scarce', 'horde', 'regen', 'bounty'],
+};
+function levelTwistCount(world, l) {
+  if (world === 0) return 0;
+  if (world === 1) return (l === 1 || l === 3) ? 1 : 0;
+  return l === 0 ? 0 : (world >= 5 && (l === 2 || l === 4)) ? 2 : 1;
+}
+export function levelTwists(idx) {
+  const world = Math.floor(idx / 5), l = idx % 5;
+  if (world === 0) return [];
+  const n = levelTwistCount(world, l);
+  const pool = TWIST_POOL[WORLDS[world].biome].slice(), r = rng(4242 + world * 977);
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  if (world === 1) pool.sort((a, b) => (b === 'supply') - (a === 'supply'));   // first twist ever seen is a friendly one
+  let start = 0; for (let k = 0; k < l; k++) start += levelTwistCount(world, k);
+  const out = [];
+  for (let j = 0; out.length < n && j < pool.length * 2; j++) { const t = pool[(start + j) % pool.length]; if (!out.includes(t)) out.push(t); }
+  return out;
+}
+export function genLevel(idx, seedOff = 0) {
   const world = Math.floor(idx / 5), l = idx % 5;
   const W = WORLDS[world];
   for (let attempt = 0; attempt < 40; attempt++) {
-    const r = rng(9001 + idx * 7919 + attempt * 104729);
+    const r = rng(9001 + idx * 7919 + attempt * 104729 + seedOff * 31337);
     const grid = new Array(GW * GH).fill(C.FREE);
     const set = (x, y, v) => { grid[y * GW + x] = v; };
     const get = (x, y) => (x < 0 || y < 0 || x >= GW || y >= GH) ? -1 : grid[y * GW + x];
@@ -131,11 +154,13 @@ export function genLevel(idx) {
       }
       if (!wOk) continue;
     }
+    const twists = levelTwists(idx);
     const lv = {
-      idx, world, l, biome: W.biome, name: `${world + 1}-${l + 1}`, grid, paths, base: [bx, 0.5], seed: 77 + idx * 31,
+      idx, world, l, biome: W.biome, name: `${world + 1}-${l + 1}`, grid, paths, base: [bx, 0.5], seed: 77 + idx * 31 + seedOff,
       startGold: Math.round(130 + idx * 9.5 + (l === 4 ? 40 : 0)),
-      waves: genWaves(idx, paths.length, rng(5150 + idx * 613)),
-      towers: Object.keys(UNLOCKS.tower).filter(k => UNLOCKS.tower[k] <= idx),
+      twists, bossAbil: BOSS_ABIL[world],
+      waves: genWaves(idx, paths.length, rng(5150 + idx * 613), twists),
+      towers: Object.keys(UNLOCKS.tower).filter(k => UNLOCKS.tower[k] <= idx && !(k === 'factory' && twists.includes('bounty'))),
       powers: Object.keys(UNLOCKS.power).filter(k => UNLOCKS.power[k] <= idx),
     };
     return lv;
@@ -148,44 +173,81 @@ export const HP_TABLE = [0.44, 0.57, 0.74, 0.96, 1.25, 1.32, 1.72, 2.24, 2.91, 3
 export const TUNE = { scale: 1, wave: 0.2 };
 export function hpMul(idx) { return HP_TABLE[idx] * TUNE.scale; }
 
-function genWaves(idx, nPaths, r) {
+function waveGroups(idx, w, nW, nPaths, r, twists, endless = false) {
   const world = Math.floor(idx / 5), l = idx % 5;
-  const nW = Math.min(18, 6 + Math.round(idx * 0.3) + (l === 4 ? 2 : 0) + (idx === 0 ? 0 : 1));
-  const allowed = ['grunt'];
-  if (idx >= 0) allowed.push('swarm');
-  if (idx >= 2) allowed.push('tank');
-  if (idx >= 3) allowed.push('flyer');
-  if (idx >= 6) allowed.push('brute');
+  const allowed = Object.keys(ENEMY_UNLOCK).filter(k => ENEMY_UNLOCK[k] <= idx);
   const raceBias = [0.75, 0.3, 0.6, 0.35, 0.8, 0.4, 0.55, 0.5][world];
-  const waves = [];
   const base = 230 * (idx === 0 ? 0.7 : 1);
-  for (let w = 0; w < nW; w++) {
-    const budget = base * Math.pow(1 + TUNE.wave * w, 1.3) * (1 + idx * 0.012);
-    const groups = [];
-    const last = w === nW - 1;
-    const nG = w < 2 ? 1 : ri(r, 1, Math.min(3, 1 + Math.floor(w / 3)));
-    let delay = 0;
-    if (last && l === 4) {
-      groups.push({ type: 'boss', race: r() < raceBias ? 'rust' : 'glim', count: idx === 39 ? 2 : 1, interval: 8, delay: 3, path: 0 });
-    }
-    if ((l === 2 || l === 3) && last && idx >= 6) groups.push({ type: 'brute', race: r() < raceBias ? 'rust' : 'glim', count: 1 + Math.floor(world / 3), interval: 3, delay: 4, path: nPaths - 1 });
-    for (let g = 0; g < nG; g++) {
-      let type = allowed[Math.floor(r() * allowed.length)];
-      if (w === 0) type = 'grunt';
-      if (type === 'brute' && w < 3) type = 'tank';
-      if (type === 'tank' && w < 2) type = 'grunt';
-      const race = r() < raceBias ? 'rust' : 'glim';
-      const e = ENEMIES[type];
-      const share = budget / nG;
-      let count = Math.max(1, Math.round(share / e.hp));
-      if (type === 'swarm') count = Math.min(count, 24);
-      if (type === 'brute' || type === 'tank') count = Math.min(count, 8);
-      count = Math.min(count, 30);
-      const interval = type === 'swarm' ? 0.45 : type === 'tank' ? 1.6 : type === 'brute' ? 2.6 : 0.95;
-      groups.push({ type, race, count, interval, delay, path: nPaths > 1 ? (g % nPaths) : 0 });
-      delay += count * interval * 0.55 + 1.5;
-    }
-    waves.push(groups);
+  const budget = base * Math.pow(1 + TUNE.wave * Math.min(w, endless ? 14 : 99), 1.3) * (1 + idx * 0.012);
+  const groups = [];
+  const last = w === nW - 1;
+  const nG = w < 2 ? 1 : ri(r, 1, Math.min(3, 1 + Math.floor(w / 3)));
+  const horde = twists.includes('horde');
+  let delay = 0;
+  if (endless ? (w > 0 && (w + 1) % 10 === 0) : (last && l === 4)) {
+    groups.push({ type: 'boss', race: r() < raceBias ? 'rust' : 'glim', count: idx === 39 && !endless ? 2 : 1, interval: 8, delay: 3, path: 0 });
   }
+  if (!endless && (l === 2 || l === 3) && last && idx >= 6) groups.push({ type: 'brute', race: r() < raceBias ? 'rust' : 'glim', count: 1 + Math.floor(world / 3), interval: 3, delay: 4, path: nPaths - 1 });
+  for (let g = 0; g < nG; g++) {
+    let type = allowed[Math.floor(r() * allowed.length)];
+    // newest enemy shows up more often in the world that introduces it
+    const fresh = allowed.filter(k => ENEMY_UNLOCK[k] >= 9 && idx - ENEMY_UNLOCK[k] < 5);
+    if (fresh.length && w >= 2 && r() < 0.35) type = fresh[Math.floor(r() * fresh.length)];
+    if (w === 0) type = 'grunt';
+    if ((type === 'brute' || type === 'splitter') && w < 3) type = 'tank';
+    if ((type === 'tank' || type === 'shield') && w < 2) type = 'grunt';
+    if ((type === 'healer' || type === 'phantom') && w < 1) type = 'grunt';
+    const race = r() < raceBias ? 'rust' : 'glim';
+    const e = ENEMIES[type];
+    const share = budget / nG;
+    let count = Math.max(1, Math.round(share / e.hp));
+    if (type === 'swarm') count = Math.min(count, 24);
+    if (type === 'brute' || type === 'tank' || type === 'splitter') count = Math.min(count, 8);
+    if (type === 'healer' || type === 'shield') count = Math.min(count, 6);
+    count = Math.min(count, 30);
+    if (horde) count = Math.min(48, count * 2);
+    let interval = type === 'swarm' ? 0.45 : type === 'tank' ? 1.6 : type === 'brute' ? 2.6 : type === 'splitter' ? 2.0 : type === 'shield' ? 1.8 : 0.95;
+    if (horde) interval *= 0.55;
+    groups.push({ type, race, count, interval, delay, path: nPaths > 1 ? (g % nPaths) : 0 });
+    delay += count * interval * 0.55 + 1.5;
+  }
+  if (twists.includes('airraid') && w >= 2 && ENEMY_UNLOCK.flyer <= Math.max(idx, 3)) {
+    const n = Math.max(2, Math.round(budget * 0.35 / ENEMIES.flyer.hp));
+    groups.push({ type: 'flyer', race: r() < 0.5 ? 'rust' : 'glim', count: Math.min(14, horde ? n * 2 : n), interval: 0.8, delay: delay * 0.5 + 2, path: 0 });
+  }
+  return groups;
+}
+function genWaves(idx, nPaths, r, twists = []) {
+  const l = idx % 5;
+  const nW = Math.min(18, 6 + Math.round(idx * 0.3) + (l === 4 ? 2 : 0) + (idx === 0 ? 0 : 1));
+  const waves = [];
+  for (let w = 0; w < nW; w++) waves.push(waveGroups(idx, w, nW, nPaths, r, twists));
   return waves;
+}
+
+// ---------------- Endless mode ----------------
+// A fresh map in a chosen world; waves are generated on demand. Every 10th wave brings a Warlord, and every 10 waves a new mutation (twist) stacks on.
+const MUTATIONS = ['swift', 'armored', 'regen', 'fog', 'airraid', 'storm', 'horde'];
+export function genEndless(world, seed = 1) {
+  const idx = world * 5 + 2;
+  const L = genLevel(idx, 1000 + seed);
+  const r = rng(777 + seed * 131 + world);
+  L.endless = true; L.name = 'Endless'; L.twists = []; L.waves = []; L.idx = idx; L.world = world;
+  L.startGold = Math.round(L.startGold * 1.15);
+  L.towers = Object.keys(UNLOCKS.tower).filter(k => UNLOCKS.tower[k] <= Math.max(idx, 20));
+  L.powers = Object.keys(UNLOCKS.power).filter(k => UNLOCKS.power[k] <= Math.max(idx, 16));
+  L.bossAbil = BOSS_ABIL[world];
+  L.hpScale = w => Math.pow(1.085, Math.max(0, w - 1)) * (1 + Math.max(0, w - 30) * 0.03);
+  L.goldK = 1;
+  const pool = MUTATIONS.slice();
+  L.more = (w) => {
+    while (L.waves.length <= w) {
+      const n = L.waves.length;
+      if (n > 0 && n % 10 === 0 && pool.length) { const k = pool.splice(Math.floor(r() * pool.length), 1)[0]; L.twists.push(k); L.mutated = { wave: n + 1, k }; }
+      if ((n + 1) % 10 === 0) { const all = ['summon', 'heal', 'shield', 'cloak', 'emp', 'haste']; L.bossAbil = []; const k = Math.min(4, 1 + Math.floor(n / 20)); while (L.bossAbil.length < k) { const a = all[Math.floor(r() * all.length)]; if (!L.bossAbil.includes(a)) L.bossAbil.push(a); } }
+      L.waves.push(waveGroups(Math.min(39, idx + Math.floor(n / 4)), n, 9999, L.paths.length, r, L.twists, true));
+    }
+  };
+  L.more(0);
+  return L;
 }

@@ -1,13 +1,13 @@
 // Ancient Planet II: Return to Hamal — app shell, screens, HUD, input, save
-import { GW, GH, TOWERS, ENEMIES, RACES, POWERS, POWER_ORDER, TOWER_ORDER, UNLOCKS, META, WORLDS, STORY, ENDING, metaEffects } from './data.js';
-import { genLevel, C, rng } from './levels.js';
+import { GW, GH, TOWERS, ENEMIES, RACES, POWERS, POWER_ORDER, TOWER_ORDER, UNLOCKS, META, WORLDS, STORY, ENDING, metaEffects, TWISTS, ABIL_TEXT, ENEMY_UNLOCK } from './data.js';
+import { genLevel, genEndless, C, rng } from './levels.js';
 import { Game, buildCost, upgradeCost, towerStats } from './core.js';
 import { AutoPlayer } from './ai.js';
 import { Renderer, makeIcons } from './render.js';
 import { initAudio, sfx, setSfx, setMusic } from './audio.js';
 
 const Q = new URLSearchParams(location.search);
-const BUILD = 'v6';
+const BUILD = 'v7';
 const DBG = { auto: Q.has('auto'), god: Q.has('god'), unlock: Q.has('unlock'), nostory: Q.has('nostory') || Q.has('auto'), speed: +Q.get('speed') || 0, q: +Q.get('q') || 0, nogov: Q.has('nogov'), perf: Q.has('perf'), easy: Q.has('easy') };
 const NL = 40;
 const $ = (s, el = document) => el.querySelector(s);
@@ -28,6 +28,7 @@ function migrateSave(raw) {
   if (!out.seen || typeof out.seen !== 'object') out.seen = {};
   if (!out.tut || typeof out.tut !== 'object') out.tut = {};
   if (!out.owned || typeof out.owned !== 'object') out.owned = {};
+  if (!out.endless || typeof out.endless !== 'object') out.endless = {};
   return out;
 }
 try { S = migrateSave(JSON.parse(localStorage.getItem(SKEY) || '{}')); } catch (e) { S = defSave(); }
@@ -224,6 +225,8 @@ function showMap(w) {
   const fr = h(`<div class="frame panel" id="map"><div class="mapview" id="mv"></div></div>`); ui.appendChild(fr); ui.appendChild(nav('map'));
   ui.id = 'ui'; fr.id = 'map';
   renderWorld();
+  const eb = h(`<button class="btn gold endless-btn ${endlessOpen() ? '' : 'dim'}" id="mendless">∞ Endless</button>`); fr.appendChild(eb);
+  eb.onclick = () => { if (!endlessOpen()) { sfx.deny && sfx.deny(); hint2('Beat 1-5 to unlock Endless mode'); return; } click(); endlessCard(); };
 }
 function renderWorld() {
   const mv = $('#mv'); const w = mapWorld; const np = nodePos(w);
@@ -250,20 +253,35 @@ function renderWorld() {
     const nw = mapWorld + (dx < 0 ? 1 : -1); if (nw >= 0 && nw <= 7) { mapWorld = nw; renderWorld(); }
   };
 }
+const endlessOpen = () => DBG.unlock || (S.stars[4] | 0) > 0;
+function hint2(t) { const mv = $('#mv'); if (!mv) return; const old = $('.levelcard', mv); if (old) old.remove(); const el = h(`<div class="levelcard panel"><div class="meta">${t}</div></div>`); mv.appendChild(el); setTimeout(() => el.remove(), 1800); }
+const twistChips = tw => tw.map(k => `<span class="twist" title="${TWISTS[k].desc}"><i>${TWISTS[k].icon}</i>${TWISTS[k].name}</span>`).join('');
+function endlessCard() {
+  const mv = $('#mv'); const old = $('.levelcard', mv); if (old) old.remove();
+  const maxW = Math.floor(maxUnlocked() / 5);
+  const rows = WORLDS.map((W, w) => { const ok = w <= maxW || DBG.unlock; const best = S.endless['w' + w] || 0; return `<div class="erow ${ok ? '' : 'locked'}" data-w="${w}"><b>${W.name}</b><span>${ok ? (best ? 'Best: wave ' + best : 'Not played') : '🔒'}</span></div>`; }).join('');
+  const el = h(`<div class="levelcard panel endless"><h3>∞ Endless</h3><div class="meta">Survive as long as you can. A Warlord every 10 waves, and a new mutation stacks on every 10 waves. Earn ◆ for every wave.</div><div class="elist">${rows}</div><div class="row"><button class="btn" id="lx">✕</button></div></div>`);
+  mv.appendChild(el); el.onpointerup = e => e.stopPropagation();
+  el.querySelectorAll('.erow').forEach(r => r.onclick = () => { if (r.classList.contains('locked')) { sfx.deny && sfx.deny(); return; } click(); startLevel(-1 - (+r.dataset.w)); });
+  $('#lx').onclick = () => el.remove();
+}
 function unlockNotes(i) {
   const out = [];
   for (const k in UNLOCKS.tower) if (UNLOCKS.tower[k] === i && i > 0) out.push('New tower: ' + TOWERS[k].name);
   for (const k in UNLOCKS.power) if (UNLOCKS.power[k] === i) out.push('New power: ' + POWERS[k].name);
   if (i === 8) out.push('New: crosshair targets & beacons');
+  for (const k in ENEMY_UNLOCK) if (ENEMY_UNLOCK[k] === i && i >= 9) out.push('New enemy: ' + ENEMIES[k].name);
   return out;
 }
 function levelCard(i) {
   const mv = $('#mv'); const old = $('.levelcard', mv); if (old) old.remove();
   const L = genLevel(i);
   const notes = unlockNotes(i);
-  const el = h(`<div class="levelcard panel"><h3>${lname(i)} · ${L.name || WORLDS[L.world].name}</h3>
+  const el = h(`<div class="levelcard panel"><h3>${lname(i)} · ${WORLDS[L.world].name}</h3>
     <div class="meta">${L.waves.length} waves · <span class="star">${'★'.repeat(S.stars[i])}</span><span style="color:#555">${'★'.repeat(3 - S.stars[i])}</span>${L.l === 4 ? ' · <b style="color:#ff6a4a">BOSS</b>' : ''}</div>
     ${notes.length ? `<div class="new">${notes.join(' · ')}</div>` : ''}
+    ${L.twists.length ? `<div class="twists">${twistChips(L.twists)}</div><div class="tdesc">${L.twists.map(k => TWISTS[k].desc).join(' ')}</div>` : ''}
+    ${L.l === 4 ? `<div class="tdesc" style="color:#ff9a7a">Warlord: ${(L.bossAbil || []).map(a => ABIL_TEXT[a]).join(', ')}.</div>` : ''}
     <div class="row"><button class="btn green" id="lplay">Play</button><button class="btn ${S.easy ? 'gold' : ''}" id="leasy">Easy: ${S.easy ? 'On' : 'Off'}</button><button class="btn" id="lx">✕</button></div></div>`);
   mv.appendChild(el);
   el.onpointerup = e => e.stopPropagation();
@@ -274,8 +292,8 @@ function levelCard(i) {
 
 // ---------------- upgrades ----------------
 let upgTab = 'towers', upgGroup = null, upgSel = null;
-const GLYPH = { dmg: '✦', range: '◎', cost: '%', coin: '$', magnet: '⊛', boost: '⚡', charges: '+1', pot: '↑', cd: '⟳', life: '♥', bgun: '⌖', dome: '◠', gold: '¤' };
-const groupLabel = (tab, g) => tab === 'towers' ? TOWERS[g].name : tab === 'weapon' ? POWERS[g].name : ({ gate: 'Temple Gate', gun: 'Base Turret', dome: 'Energy Dome', treasury: 'War Chest' })[g];
+const GLYPH = { dmg: '✦', range: '◎', cost: '%', coin: '$', magnet: '⊛', boost: '⚡', charges: '+1', pot: '↑', cd: '⟳', life: '♥', bgun: '⌖', dome: '◠', gold: '¤', perk: '★', sell: '♻', interest: '%', mend: '✚' };
+const groupLabel = (tab, g) => tab === 'towers' ? TOWERS[g].name : tab === 'weapon' ? POWERS[g].name : ({ gate: 'Temple Gate', gun: 'Base Turret', dome: 'Energy Dome', treasury: 'War Chest', salvage: 'Salvage' })[g];
 const groupIcon = (tab, g) => tab === 'towers' ? ticon(g) : tab === 'weapon' ? PICONS[g] : null;
 const groupLocked = (tab, g) => tab === 'towers' ? UNLOCKS.tower[g] > maxUnlocked() : tab === 'weapon' ? UNLOCKS.power[g] > maxUnlocked() : false;
 function showUpg(tab) {
@@ -291,7 +309,7 @@ function showUpg(tab) {
   const uc = $('#ucards');
   for (const g of groups) {
     const ic = groupIcon(upgTab, g);
-    const el = h(`<div class="ucard ${g === upgGroup ? 'on' : ''} ${groupLocked(upgTab, g) ? 'locked' : ''}" style="${ic ? `background-image:url(${ic})` : ''}">${ic ? '' : `<div style="display:flex;height:100%;align-items:center;justify-content:center;font-size:28px">${{ gate: '♥', gun: '⌖', dome: '◠', treasury: '¤' }[g]}</div>`}<span>${groupLabel(upgTab, g)}</span></div>`);
+    const el = h(`<div class="ucard ${g === upgGroup ? 'on' : ''} ${groupLocked(upgTab, g) ? 'locked' : ''}" style="${ic ? `background-image:url(${ic})` : ''}">${ic ? '' : `<div style="display:flex;height:100%;align-items:center;justify-content:center;font-size:28px">${{ gate: '♥', gun: '⌖', dome: '◠', treasury: '¤', salvage: '♻' }[g]}</div>`}<span>${groupLabel(upgTab, g)}</span></div>`);
     el.onclick = () => { click(); upgGroup = g; upgSel = null; showUpg(); };
     uc.appendChild(el);
   }
@@ -310,7 +328,7 @@ function renderNodes() {
     for (const n of row) {
       const own = !!S.owned[n.id], avail = !own && (!n.req || S.owned[n.req]) && !locked;
       const k = Object.keys(n.eff)[0];
-      const el = h(`<div class="unode ${own ? 'own' : ''} ${avail ? 'avail' : ''} ${n.id === upgSel ? 'sel' : ''}">${GLYPH[k] || '•'}${own ? '' : `<span class="c">${n.cost}</span>`}</div>`);
+      const el = h(`<div class="unode ${own ? 'own' : ''} ${avail ? 'avail' : ''} ${n.id === upgSel ? 'sel' : ''} ${n.perk ? 'perk' : ''}">${GLYPH[k] || '•'}${own ? '' : `<span class="c">${n.cost}</span>`}</div>`);
       el.onclick = () => { click(); upgSel = n.id; renderNodes(); };
       r.appendChild(el);
     }
@@ -320,7 +338,7 @@ function renderNodes() {
   const n = nodes.find(m => m.id === upgSel); const own = !!S.owned[n.id]; const avail = !own && (!n.req || S.owned[n.req]) && !locked;
   const k = Object.keys(n.eff)[0];
   const det = $('#udet');
-  det.innerHTML = `<div class="big">${GLYPH[k] || '•'}</div><div class="txt"><b>${n.name}</b>${n.desc}<br><span style="opacity:.7">${own ? 'Owned' : locked ? 'Locked' : !avail ? 'Requires ' + nodes.find(m => m.id === n.req).name : 'Cost: <span class="emer">◆ ' + n.cost + '</span>'}</span></div>
+  det.innerHTML = `<div class="big">${GLYPH[k] || '•'}</div><div class="txt"><b>${n.name}${n.perk ? ' <span style="color:var(--gold,#ffc840);font-size:11px">PERK</span>' : ''}</b>${n.desc}<br><span style="opacity:.7">${own ? 'Owned' : locked ? 'Locked' : !avail ? 'Requires ' + nodes.find(m => m.id === n.req).name : 'Cost: <span class="emer">◆ ' + n.cost + '</span>'}</span></div>
     <div class="col"><button class="btn green ${avail && S.emer >= n.cost ? '' : 'dim'}" id="ubuy">Buy</button><button class="btn ${S.hist.length ? '' : 'dim'}" id="uundo">Undo</button><button class="btn red ${Object.keys(S.owned).length ? '' : 'dim'}" id="ureset">Reset</button></div>`;
   $('#ubuy').onclick = () => {
     if (!avail || S.emer < n.cost) { sfx.deny && sfx.deny(); return; }
@@ -342,7 +360,9 @@ function showInfo() {
     <h3>Enemy races</h3>
     ${Object.entries(RACES).map(([k, r]) => `<div class="irow"><img src="${eicon('grunt', k)}"><div><b>${r.name}</b><br><small>${r.desc}</small></div></div>`).join('')}
     <h3>Enemies</h3>
-    ${Object.entries(ENEMIES).map(([k, e]) => `<div class="irow"><img src="${eicon(k, 'rust')}"><img src="${eicon(k, 'glim')}"><div><b>${e.name}</b><br><small>${e.air ? 'Flying. Ignores ground-only towers. ' : ''}${e.armor ? 'Armor ' + e.armor + '. ' : ''}${e.boss ? 'Boss. Massive health.' : ''}${!e.air && !e.armor && !e.boss ? (k === 'swarm' ? 'Fast and numerous.' : 'Standard infantry.') : ''}</small></div></div>`).join('')}
+    ${Object.entries(ENEMIES).map(([k, e]) => `<div class="irow"><img src="${eicon(k, 'rust')}"><img src="${eicon(k, 'glim')}"><div><b>${e.name}</b> <small>· from ${lname(ENEMY_UNLOCK[k])}</small><br><small>${e.desc ? e.desc + ' ' : ''}${e.air ? 'Flying. Ignores ground-only towers. ' : ''}${e.armor ? 'Armor ' + e.armor + '. ' : ''}${e.boss ? 'Boss. Massive health, and a special ability that changes by world.' : ''}${!e.desc && !e.air && !e.armor && !e.boss ? (k === 'swarm' ? 'Fast and numerous.' : 'Standard infantry.') : ''}</small></div></div>`).join('')}
+    <h3>Twists</h3><p><small>From world 2 on, most levels change one or two rules. The level card tells you which.</small></p>
+    ${Object.values(TWISTS).map(t => `<div class="irow"><div class="tico">${t.icon}</div><div><b>${t.name}</b><br><small>${t.desc}</small></div></div>`).join('')}
     <h3>Towers</h3>
     ${TOWER_ORDER.map(k => `<div class="irow"><img src="${ticon(k)}"><div><b>${TOWERS[k].name}</b> <small>· ${TOWERS[k].cost} gold${TOWERS[k].core ? ' + 1◆' : ''} · unlocks at ${lname(UNLOCKS.tower[k])}</small><br><small>${TOWERS[k].desc}</small>${TOWERS[k].branches ? `<br><small style="color:var(--lime)">Branches: ${TOWERS[k].branches.map(b => b.name).join(' / ')}</small>` : ''}</div></div>`).join('')}
     <h3>Powers</h3>
@@ -466,7 +486,7 @@ const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => se
 async function startLevel(i) {
   if (starting) return; starting = true;
   try {
-  const L = genLevel(i);
+  const L = i < 0 ? genEndless(-1 - i, 1 + (S.plays % 997)) : genLevel(i);
   try { await withTimeout(R.prepBiome(L.biome), 25000, 'biome load'); } catch (e) { console.warn('biome', e); }
   curIdx = i; S.plays++; save();
   G = new Game(L, { meta: metaEffects(S.owned), easy: S.easy, autoCollect: DBG.auto, god: DBG.god });
@@ -479,9 +499,10 @@ async function startLevel(i) {
   buildHUD();
   tutStep = i === 0 && !S.tut.done && !DBG.auto ? 1 : 0;
   tutCheck();
-  const notes = unlockNotes(i);
-  banner(`${lname(i)} ${L.name || ''}`);
-  if (notes.length) setTimeout(() => G && G.L.idx === i && banner(notes[0]), 1700);
+  const notes = i < 0 ? [] : unlockNotes(i).concat(L.twists.map(k => 'Twist: ' + TWISTS[k].name));
+  banner(i < 0 ? `∞ Endless · ${WORLDS[L.world].name}` : `${lname(i)} ${L.name || ''}`);
+  notes.forEach((n, k) => setTimeout(() => G && G === Gref && banner(n), 1700 * (k + 1)));
+  const Gref = G;
   } catch (e) {
     console.error('startLevel', e);
     try { localStorage.setItem('ap2-lasterr', JSON.stringify({ t: Date.now(), lvl: i, msg: String(e && e.message || e), stack: String(e && e.stack || '').slice(0, 600) })); } catch (_) { }
@@ -503,6 +524,7 @@ function buildHUD() {
       <div class="hpill lifebox"><span style="color:#ff6a6a">♥</span><span id="hlife">20</span><div class="lifebar" id="hlb"><i></i></div></div>
       <div class="hpill wavetxt" id="hwave">Wave 0/0</div>
     </div>
+    <div class="twistbar" id="htw">${twistChips(L.twists)}</div>
     <div class="tray l" id="tray"></div>
     <div class="tray r" id="ptray"></div>
     <div class="hud-bl"><div class="hb" id="hpause">${svgPause}</div><div class="hb ${speed > 1 ? 'on' : ''}" id="hff">${svgFF}</div></div>
@@ -594,7 +616,7 @@ function openBuildMenu(cx, cy) {
   closeMenus();
   const v = G.cell(cx, cy);
   const kinds = TOWER_ORDER.filter(k => G.L.towers.includes(k) && G.canBuild(k, cx, cy));
-  if (!kinds.length) return;
+  if (!kinds.length) { if (G.tw.scarce && G.capped('gun') && v === C.FREE) hint('Scarce Ground: 10-tower limit reached. Sell one to build.', 1800); return; }
   R.showCell(cx, cy);
   const [sx, sy] = R.cellScreen(cx, cy);
   const n = kinds.length, perRow = Math.min(n, 4), rows = Math.ceil(n / perRow);
@@ -672,17 +694,30 @@ function openTowerInfo(t) {
 function openPause() {
   if (!G || ended || $('.modal')) return;
   paused = true; closeMenus();
-  const m = h(`<div class="modal"><div class="panel"><h2>Paused</h2><div style="margin-bottom:14px;opacity:.8">${lname(curIdx)} · Wave ${G.wave}/${G.nWaves}${S.easy ? ' · Easy' : ''}</div><div class="col">
+  const m = h(`<div class="modal"><div class="panel"><h2>Paused</h2><div style="margin-bottom:14px;opacity:.8">${curIdx < 0 ? 'Endless' : lname(curIdx)} · Wave ${G.wave}${G.L.endless ? '' : '/' + G.nWaves}${S.easy ? ' · Easy' : ''}</div><div class="col">
     <button class="btn green" id="presume">Resume</button><button class="btn" id="prestart">Restart</button><button class="btn" id="pmusic">Music: ${S.music ? 'On' : 'Off'}</button><button class="btn" id="pgfx">Graphics: ${gfxName()}</button><button class="btn red" id="pmap">Quit to map</button></div></div></div>`);
   ui.appendChild(m);
   $('#presume').onclick = () => { click(); m.remove(); paused = false; };
   $('#prestart').onclick = () => { click(); m.remove(); startLevel(curIdx); };
   $('#pmusic').onclick = e => { S.music = !S.music; setMusic(S.music); save(); e.target.textContent = 'Music: ' + (S.music ? 'On' : 'Off'); };
   $('#pgfx').onclick = e => { const o = ['auto', 'ultra', 'high', 'med', 'low']; S.quality = o[(o.indexOf(S.quality) + 1) % o.length]; try { localStorage.removeItem(GFX_KEY); } catch (_) { } save(); setQ(); click(); e.target.textContent = 'Graphics: ' + gfxName(); };
-  $('#pmap').onclick = () => { click(); m.remove(); showMap(Math.floor(curIdx / 5)); };
+  $('#pmap').onclick = () => { click(); m.remove(); if (G && G.L.endless && G.wave > 1) { G.life = 0; G.status = "lost"; ended = true; endT = 0; finishBattle(); return; } showMap(curIdx < 0 ? -1 - curIdx : Math.floor(curIdx / 5)); };
 }
 const gfxName = () => { const n = { auto: 'Auto', ultra: 'Ultra', high: 'High', med: 'Medium', low: 'Low' }[S.quality] || 'Auto'; return S.quality === 'auto' ? n + ' (' + ['', 'Low', 'Med', 'High', 'Ultra'][R.quality] + ')' : n; };
+function finishEndless() {
+  const w = -1 - curIdx, reached = Math.max(0, G.wave - 1), key = 'w' + w, prev = S.endless[key] || 0;
+  const best = reached > prev; if (best) S.endless[key] = reached;
+  const total = Math.floor(reached * 1.2) + (best ? 10 : 0);
+  S.emer += total; save(); sfx.win && sfx.win();
+  const m = h(`<div class="modal"><div class="panel"><h2 style="color:var(--lime)">∞ Endless over</h2><div class="rew">${WORLDS[w].name}<br>You held out through <b>wave ${reached}</b>${best ? ' · <b style="color:var(--lime)">New best!</b>' : ` · best ${prev}`}<br>Waves → <span class="emer">◆ ${Math.floor(reached * 1.2)}</span>${best ? '<br>New record → <span class="emer">◆ 10</span>' : ''}<br><b>Total <span class="emer">◆ ${total}</span></b></div>
+    <div class="col"><button class="btn green" id="rre">Again</button><button class="btn gold" id="rupg">Upgrades</button><button class="btn" id="rmap">Map</button></div></div></div>`);
+  ui.appendChild(m);
+  $('#rre').onclick = () => { click(); startLevel(curIdx); };
+  $('#rupg').onclick = () => { click(); showUpg(); };
+  $('#rmap').onclick = () => { click(); showMap(w); };
+}
 function finishBattle() {
+  if (G.L.endless) return finishEndless();
   const won = G.status === 'won';
   const i = curIdx; const stars = won ? Math.max(1, G.starRating() || 1) : 0;
   let html;
@@ -820,7 +855,7 @@ function updHUD() {
   set('gold', Math.floor(G.gold), v => { hudRefs.gold.textContent = v; refreshCtx(); });
   set('core', G.cores, v => { hudRefs.core.textContent = v; refreshCtx(); });
   set('life', Math.ceil(G.life), v => { hudRefs.life.textContent = v; hudRefs.lb.firstElementChild.style.width = (100 * G.life / G.maxLife) + '%'; hudRefs.lb.classList.toggle('low', G.life / G.maxLife < 0.4); });
-  set('wave', G.wave + '/' + G.nWaves, v => hudRefs.wave.textContent = 'Wave ' + v);
+  set('wave', G.L.endless ? '' + G.wave : G.wave + '/' + G.nWaves, v => hudRefs.wave.textContent = 'Wave ' + v);
   // tray affordability
   for (const el of hudRefs.tray) { const k = el.dataset.k; el.classList.toggle('poor', G.gold < buildCost(k, G.meta) || G.cores < (TOWERS[k].core || 0)); }
   for (const el of hudRefs.ptray) {
@@ -854,6 +889,10 @@ function handleFx() {
       case 'strike': sfx.strike && sfx.strike(); break;
       case 'cleared': sfx.boom && sfx.boom(1); break;
       case 'bossdie': banner('Warlord destroyed!'); break;
+      case 'mutation': setTimeout(() => G && banner('Mutation: ' + TWISTS[f.k].name), 1400); { const tb = $('#htw'); if (tb) tb.innerHTML = twistChips(G.L.twists); } break;
+      case 'zap': sfx.boom && sfx.boom(0.6); break;
+      case 'emp': sfx.boom && sfx.boom(1.2); banner('EMP! Towers stunned'); break;
+      case 'crateDrop': sfx.coinSpawn && sfx.coinSpawn(); break;
     }
   }
   if (R.flash) { flash(R.flash.c, R.flash.a); R.flash = null; }

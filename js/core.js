@@ -1,4 +1,4 @@
-import { GW, GH, TOWERS, ENEMIES, POWERS } from './data.js';
+import { GW, GH, TOWERS, ENEMIES, POWERS, BOSS_ABIL } from './data.js';
 import { C, rng, hpMul, plen } from './levels.js';
 
 export const cellX = cx => cx - (GW - 1) / 2;
@@ -43,6 +43,11 @@ export function towerStats(kind, lvl, branch, meta) {
   if (m) { if (s.dmg) s.dmg *= 1 + m.dmg; if (s.dps) s.dps *= 1 + m.dmg; s.range *= 1 + m.range; }
   if (kind === 'support' && meta) s.boost += meta.boost;
   if (kind === 'factory' && meta) s.coin = Math.round(s.coin * (1 + meta.coin));
+  const pk = (meta && meta.perks) || {};
+  if (kind === 'missile' && pk.missile_cluster) s.splash *= 1.35;
+  if (kind === 'naval' && pk.naval_shrap) s.splash *= 1.4;
+  if (kind === 'factory' && pk.factory_veins) s.every -= 2;
+  if (kind === 'reaper' && pk.reaper_tithe) s.soul = (s.soul || 1) + 2;
   return s;
 }
 export function upgradeCost(kind, lvl, branch) {
@@ -62,7 +67,9 @@ export function buildCost(kind, meta) {
 export class Game {
   constructor(level, opts = {}) {
     this.L = level;
-    this.meta = opts.meta || { tower: {}, power: {}, life: 0, bgun: 0, dome: 0, gold: 0, coin: 0, magnet: 0, boost: 0 };
+    this.meta = Object.assign({ tower: {}, power: {}, life: 0, bgun: 0, dome: 0, gold: 0, coin: 0, magnet: 0, boost: 0, perks: {}, sell: 0, interest: 0, mend: 0 }, opts.meta || {});
+    this.pk = this.meta.perks || {};
+    this.tw = {}; for (const k of level.twists || []) this.tw[k] = 1;
     this.easy = !!opts.easy;
     this.auto = !!opts.autoCollect;
     this.god = !!opts.god;
@@ -71,12 +78,13 @@ export class Game {
     this.paths = level.paths.map(buildPath);
     this.hpMul = hpMul(level.idx) * (this.easy ? 0.68 : 1);
     this.goldMul = 1 + level.idx * 0.025;
-    this.gold = Math.round(level.startGold * (1 + this.meta.gold) * (this.easy ? 1.25 : 1));
+    this.gold = Math.round(level.startGold * (1 + this.meta.gold) * (this.easy ? 1.25 : 1) * (this.tw.goldrush ? 0.75 : 1));
+    this.stormT = 14; this.supplyT = 20; this.waveLeaks = 0;
     this.cores = 1 + (level.idx >= 5 ? 1 : 0);
     this.maxLife = 20 + this.meta.life + (this.easy ? 10 : 0);
     this.life = this.maxLife;
     this.dome = this.meta.dome;
-    this.wave = 0; this.nWaves = level.waves.length;
+    this.wave = 0; this.nWaves = level.endless ? 9999 : level.waves.length;
     this.queue = []; this.waveTimer = 0; this.nextIn = 0;
     this.enemies = []; this.towers = []; this.proj = []; this.coins = []; this.blocks = []; this.mines = []; this.strikes = []; this.lasers = [];
     this.fx = []; this.t = 0; this.status = 'build'; this.uid = 1; this.freezeT = 0;
@@ -99,8 +107,11 @@ export class Game {
     this.bgun = this.meta.bgun ? { lvl: this.meta.bgun, cd: 0, aim: 0, target: null } : null;
   }
   cell(x, y) { return (x < 0 || y < 0 || x >= GW || y >= GH) ? -1 : this.grid[y * GW + x]; }
+  combatCount() { let n = 0; for (const t of this.towers) if (t.kind !== 'factory') n++; return n; }
+  capped(kind) { return !!this.tw.scarce && kind !== 'factory' && this.combatCount() >= 10; }
   canBuild(kind, cx, cy) {
     if (this.towerAt.has(cy * GW + cx)) return false;
+    if (this.capped(kind)) return false;
     const v = this.cell(cx, cy);
     const T = TOWERS[kind];
     if (T.deposit) return v === C.DEPOSIT;
@@ -112,7 +123,7 @@ export class Game {
     const cost = buildCost(kind, this.meta), core = TOWERS[kind].core || 0;
     if (this.gold < cost || this.cores < core) return null;
     this.gold -= cost; this.cores -= core;
-    const t = { id: this.uid++, kind, cx, cy, x: cellX(cx), z: cellZ(cy), lvl: 0, branch: -1, cd: 0.3, aim: 0, spent: cost, target: null, beams: [], coinT: 0, kills: 0, built: this.t };
+    const t = { id: this.uid++, kind, cx, cy, x: cellX(cx), z: cellZ(cy), lvl: 0, branch: -1, cd: 0.3, aim: 0, spent: cost, target: null, beams: [], coinT: 0, kills: 0, built: this.t, stun: 0, shots: 0 };
     t.coinT = towerStats(kind, 0, 0, this.meta).every || 0;
     this.towers.push(t); this.towerAt.set(cy * GW + cx, t);
     this.fx.push({ t: 'build', x: t.x, z: t.z });
@@ -127,12 +138,13 @@ export class Game {
     return true;
   }
   sell(t) {
-    const refund = Math.floor(t.spent * 0.5);
+    const refund = Math.floor(t.spent * this.sellRate());
     this.gold += refund;
     this.towers = this.towers.filter(o => o !== t); this.towerAt.delete(t.cy * GW + t.cx);
     this.fx.push({ t: 'sell', x: t.x, z: t.z, v: refund });
     return refund;
   }
+  sellRate() { return Math.min(0.8, 0.5 + (this.meta.sell || 0)); }
   tstats(t) { return towerStats(t.kind, t.lvl, t.branch, this.meta); }
   // effective stats incl. support aura
   eff(t) {
@@ -146,6 +158,7 @@ export class Game {
     if (boost) { if (s.dmg) s.dmg *= 1 + boost; if (s.dps) s.dps *= 1 + boost; }
     if (rateB && s.rate) s.rate *= 1 + rateB;
     if (rangeB) s.range *= 1 + rangeB;
+    if (this.tw.fog) s.range *= 0.85;
     s.boosted = boost > 0;
     return s;
   }
@@ -153,7 +166,13 @@ export class Game {
     if (this.wave >= this.nWaves || this.status === 'won' || this.status === 'lost') return 0;
     let bonus = 0;
     if (this.status === 'play' && this.nextIn > 0) { bonus = Math.round(this.nextIn * 1.5 + 5); this.gold += bonus; this.fx.push({ t: 'bonus', v: bonus }); }
+    if (this.status === 'play' || this.wave > 0) {
+      if (this.meta.interest) { const i = Math.min(30, Math.floor(this.gold * this.meta.interest)); if (i > 0) { this.gold += i; this.fx.push({ t: 'interest', v: i }); } }
+      if (this.meta.mend && this.wave > 0 && this.waveLeaks === 0 && this.life < this.maxLife) { this.life = Math.min(this.maxLife, this.life + this.meta.mend); this.fx.push({ t: 'mend' }); }
+    }
+    this.waveLeaks = 0;
     this.status = 'play';
+    if (this.L.more) { this.L.more(this.wave); for (const k of this.L.twists) if (!this.tw[k]) { this.tw[k] = 1; this.fx.push({ t: 'mutation', k }); } }
     const groups = this.L.waves[this.wave];
     for (const g of groups) for (let i = 0; i < g.count; i++) this.queue.push({ at: this.t + g.delay + i * g.interval, type: g.type, race: g.race, path: Math.min(g.path, this.paths.length - 1) });
     this.queue.sort((a, b) => a.at - b.at);
@@ -165,37 +184,56 @@ export class Game {
   }
   nextWavePreview() {
     if (this.wave >= this.nWaves) return [];
+    if (this.L.more) this.L.more(this.wave);
     const m = {};
     for (const g of this.L.waves[this.wave]) { const k = g.type + ':' + g.race; m[k] = (m[k] || 0) + g.count; }
     return Object.entries(m).map(([k, n]) => { const [type, race] = k.split(':'); return { type, race, n }; });
   }
-  spawn(type, race, pi) {
+  spawn(type, race, pi, d0 = 0, hpK = 1) {
     const E = ENEMIES[type];
     const path = this.paths[pi];
-    const hp = E.hp * this.hpMul * (1 + (this.wave - 1) * 0.015) * (E.boss && this.L.idx === 39 ? 0.75 : 1);
-    const e = { id: this.uid++, type, race, pi, d: 0, hp, maxHp: hp, speed: E.speed * (0.94 + this.r() * 0.12), armor: E.armor, air: !!E.air, slow: 0, slowT: 0, x: 0, z: 0, rot: 0, off: (this.r() - 0.5) * 0.3, blocked: false, hasted: 0, hitT: 0, dead: false };
-    const p = posAt(path, 0); e.x = p[0]; e.z = p[1]; e.rot = p[2];
+    const wk = this.L.endless ? this.L.hpScale(this.wave) : (1 + (this.wave - 1) * 0.015);
+    let hp = E.hp * this.hpMul * wk * (E.boss && this.L.idx === 39 ? 0.75 : 1) * hpK;
+    if (this.tw.swift) hp *= 0.85;
+    if (this.tw.horde && !E.boss) hp *= 0.5;
+    const e = { id: this.uid++, type, race, pi, d: d0, hp, maxHp: hp, speed: E.speed * (0.94 + this.r() * 0.12) * (this.tw.swift ? 1.25 : 1), armor: E.armor + (this.tw.armored ? 2 : 0), air: !!E.air, slow: 0, slowT: 0, x: 0, z: 0, rot: 0, off: (this.r() - 0.5) * 0.3, blocked: false, hasted: 0, hitT: 0, dead: false,
+      shield: 0, shieldMax: 0, cloaked: false, revealed: false, guard: false, lastHit: this.t, abT: 2 + this.r() * 2, cloakT: 2 + this.r() * 3, dash: 0, burn: 0, burnDps: 0, shieldStage: 0 };
+    if (E.boss) e.abil = this.L.bossAbil || BOSS_ABIL[Math.min(7, this.L.world || 0)] || [];
+    const p = posAt(path, d0); e.x = p[0]; e.z = p[1]; e.rot = p[2];
     this.enemies.push(e);
+    return e;
   }
   damage(e, dmg, src, opts = {}) {
     if (e.dead) return 0;
-    let d = dmg;
+    let d = dmg, crit = false;
+    const pk = this.pk, tw = opts.tower;
     if (src) {
       const T = TOWERS[src];
       if (T.strong === e.race) d *= 1.5; else if (T.weak === e.race) d *= 0.72;
-      if (src === 'destroyer' && (e.type === 'tank' || e.type === 'boss' || e.type === 'brute')) d *= 2;
+      if (src === 'destroyer' && (e.type === 'tank' || e.type === 'boss' || e.type === 'brute' || e.type === 'shield' || e.type === 'splitter')) d *= 2;
+      if (src === 'gun' && pk.gun_crit && this.r() < 0.15) { d *= 2.5; crit = true; }
+      if (e.air && ((src === 'gun' && pk.gun_tracer) )) d *= 1.25;
+      if (e.air && src === 'missile' && pk.missile_aa) d *= 1.4;
+      if (src === 'destroyer' && pk.destroyer_exec && e.hp < e.maxHp * 0.3) { d *= 2; crit = true; }
+      if (src === 'energy' && pk.energy_over && opts.over) { d *= 2; crit = true; }
     }
-    if (!opts.beam) { const arm = e.armor * (1 - (opts.pierce || 0)); d = Math.max(d * 0.2, d - arm); }
-    e.hp -= d; e.hitT = 0.12;
-    if (opts.show) this.fx.push({ t: 'dmg', x: e.x, z: e.z, v: Math.round(d), crit: d > dmg * 1.2 });
+    if (pk.cryo_brittle && e.slow > 0) d *= 1.15;
+    const breaker = pk.support_break && tw && tw.boosted;
+    if (e.guard && !breaker) d *= 0.7;
+    if (!opts.beam && !opts.true) { const arm = e.armor * (1 - (opts.pierce || 0)); d = Math.max(d * 0.2, d - arm); }
+    if (src === 'destroyer' && pk.destroyer_shred) { e.armor = Math.max(0, e.armor - 2); if (e.shield > 0) e.shield = 0; }
+    if (e.shield > 0) { const sd = d * (breaker ? 1.5 : 1); const ab = Math.min(e.shield, sd); e.shield -= ab; d = Math.max(0, d - ab / (breaker ? 1.5 : 1)); if (e.shield <= 0) this.fx.push({ t: 'shieldBreak', x: e.x, z: e.z }); }
+    e.hp -= d; e.hitT = 0.12; e.lastHit = this.t;
+    if (opts.show || crit) this.fx.push({ t: 'dmg', x: e.x, z: e.z, v: Math.round(d), crit: crit || d > dmg * 1.2 });
     if (e.hp <= 0) this.kill(e, opts.tower);
     return d;
   }
   kill(e, tower) {
     e.dead = true;
     const E = ENEMIES[e.type];
-    let g = Math.round(E.gold * this.goldMul);
+    let g = Math.round(E.gold * this.goldMul * (this.tw.bounty ? 1.4 : 1) * (this.tw.horde && !E.boss ? 0.55 : 1) * (this.L.endless ? this.L.goldK || 1 : 1));
     if (tower) { tower.kills++; if (tower.kind === 'reaper') g += towerStats('reaper', tower.lvl, tower.branch, this.meta).soul || 1; }
+    if (e.type === 'splitter') for (let i = 0; i < 3; i++) { const s = this.spawn('swarm', e.race, e.pi, Math.max(0, e.d - 0.25 * i), 0.5 * (this.tw.horde ? 2 : 1)); s.off = (i - 1) * 0.18; }
     this.gold += g; this.stats.gold += g; this.stats.kills++;
     this.fx.push({ t: 'die', x: e.x, z: e.z, type: e.type, race: e.race, air: e.air, g });
     if (E.boss) { this.cores += 1; this.fx.push({ t: 'bossdie', x: e.x, z: e.z }); }
@@ -207,6 +245,7 @@ export class Game {
     for (const e of this.enemies) {
       if (e.dead) continue;
       if (e.air ? !T.air : !T.ground) continue;
+      if (e.cloaked && !e.revealed && !(t.kind === 'gun' && this.pk.gun_tracer)) continue;
       if (!this.inRange(t, s, e)) continue;
       let p = e.d / this.paths[e.pi].len + (e.type === 'boss' ? 0.02 : 0);
       if (t.kind === 'destroyer' && e.armor > 0) p += 0.5;
@@ -299,13 +338,14 @@ export class Game {
     const frozen = this.freezeT > 0;
     if (frozen) this.freezeT -= dt;
     const beacons = this.objects.filter(o => o.kind === 'beacon');
+    this.stepSpecials(dt, frozen);
     for (const e of this.enemies) {
       if (e.dead) continue;
       if (e.hitT > 0) e.hitT -= dt;
       if (e.slowT > 0) { e.slowT -= dt; if (e.slowT <= 0) e.slow = 0; }
       e.hasted = 0;
       for (const b of beacons) if (Math.hypot(b.x - e.x, b.z - e.z) < 2.2) e.hasted = 0.3;
-      let v = e.speed * (1 - e.slow) * (1 + e.hasted);
+      let v = e.speed * (1 - e.slow) * (1 + e.hasted) * (e.dash > 0 ? 2.5 : 1) * (e.jam ? 0.85 : 1);
       if (frozen) v = 0;
       // blocks
       e.blocked = false;
@@ -322,7 +362,7 @@ export class Game {
         e.dead = true; e.leaked = true;
         const dmg = ENEMIES[e.type].dmg;
         if (this.dome > 0) { this.dome--; this.fx.push({ t: 'dome' }); }
-        else if (!this.god) { this.life -= dmg; this.stats.leaks += dmg; this.fx.push({ t: 'leak', v: dmg }); }
+        else if (!this.god) { this.life -= dmg; this.stats.leaks += dmg; this.waveLeaks += dmg; this.fx.push({ t: 'leak', v: dmg }); }
       }
       // mines
       if (!e.air) for (const m of this.mines) {
@@ -365,6 +405,79 @@ export class Game {
     if (this.life <= 0) { this.life = 0; this.status = 'lost'; this.fx.push({ t: 'lost' }); }
     else if (this.status === 'play' && this.wave >= this.nWaves && !this.queue.length && !this.enemies.length) { this.status = 'won'; this.fx.push({ t: 'won' }); }
   }
+  // enemy abilities, auras, cloaking and level twists (runs before movement each tick)
+  stepSpecials(dt, frozen) {
+    const E = this.enemies, T = this.towers, pk = this.pk;
+    const supports = T.filter(t => t.kind === 'support');
+    const sup = supports.map(t => [t, towerStats('support', t.lvl, t.branch, this.meta).range]);
+    const shields = E.filter(e => !e.dead && e.type === 'shield');
+    for (const e of E) {
+      if (e.dead) continue;
+      // Bulwark barrier
+      e.guard = false;
+      for (const b of shields) if (Math.hypot(b.x - e.x, b.z - e.z) < 1.3) { e.guard = true; break; }
+      // reveal / jam by Amplifiers
+      e.revealed = false; e.jam = false;
+      for (const [t, r] of sup) if (Math.hypot(t.x - e.x, t.z - e.z) <= r) { e.revealed = true; if (pk.support_jam) e.jam = true; }
+      // regeneration twist
+      if (this.tw.regen && this.t - e.lastHit > 2 && e.hp < e.maxHp) e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.015 * dt);
+      // plasma burn
+      if (e.burn > 0) { e.burn -= dt; e.hp -= e.burnDps * dt; if (e.hp <= 0 && !e.dead) { this.kill(e, e.burnBy); continue; } }
+      if (e.dash > 0) e.dash -= dt;
+      if (frozen) continue;
+      if (e.type === 'phantom' || (e.abil && e.abil.includes('cloak'))) {
+        e.cloakT -= dt;
+        if (e.cloakT <= 0) { e.cloaked = !e.cloaked; e.cloakT = e.cloaked ? (e.type === 'boss' ? 2.2 : 2.5) : (e.type === 'boss' ? 7 : 4); this.fx.push({ t: e.cloaked ? 'cloak' : 'uncloak', x: e.x, z: e.z }); }
+      }
+      if (e.type === 'healer') {
+        e.abT -= dt;
+        if (e.abT <= 0) { e.abT = 2.5; this.healAround(e, 1.5, 0.1); }
+      }
+      if (e.abil) this.bossAbil(e, dt);
+    }
+    // Ion Storm twist
+    if (this.tw.storm && this.status === 'play') {
+      this.stormT -= dt;
+      if (this.stormT <= 0) {
+        this.stormT = 15 + this.r() * 8;
+        const c = T.filter(t => t.kind !== 'factory' && t.stun <= 0);
+        if (c.length) { const t = c[Math.floor(this.r() * c.length)]; t.stun = 4; this.fx.push({ t: 'zap', x: t.x, z: t.z }); }
+      }
+    }
+    // Supply drop twist: a big coin crate
+    if (this.tw.supply && this.status === 'play') {
+      this.supplyT -= dt;
+      if (this.supplyT <= 0) {
+        this.supplyT = 22 + this.r() * 10;
+        const free = []; for (let y = 2; y < GH; y++) for (let x = 0; x < GW; x++) if (this.cell(x, y) === C.FREE && !this.towerAt.has(y * GW + x)) free.push([x, y]);
+        if (free.length) { const [x, y] = free[Math.floor(this.r() * free.length)]; this.coins.push({ id: this.uid++, x: cellX(x), z: cellZ(y), v: Math.round(30 + 12 * Math.sqrt(this.hpMul) * 3), t: 0, life: 10, crate: true }); this.fx.push({ t: 'crateDrop', x: cellX(x), z: cellZ(y) }); }
+      }
+    }
+    for (const t of T) if (t.stun > 0) t.stun -= dt;
+  }
+  healAround(src, r, k) {
+    let n = 0;
+    for (const o of this.enemies) if (!o.dead && o.hp < o.maxHp && Math.hypot(o.x - src.x, o.z - src.z) < r) { o.hp = Math.min(o.maxHp, o.hp + o.maxHp * (o === src ? k * 0.5 : k)); n++; }
+    this.fx.push({ t: 'heal', x: src.x, z: src.z, r });
+    return n;
+  }
+  bossAbil(e, dt) {
+    const A = e.abil;
+    if (A.includes('shield')) {
+      const f = e.hp / e.maxHp;
+      if ((e.shieldStage === 0 && f < 0.67) || (e.shieldStage === 1 && f < 0.34)) { e.shieldStage++; e.shield = e.shieldMax = e.maxHp * 0.16; this.fx.push({ t: 'shieldUp', x: e.x, z: e.z }); }
+    }
+    e.abT -= dt;
+    if (e.abT > 0) return;
+    const opts = A.filter(a => a !== 'shield' && a !== 'cloak');
+    if (!opts.length) { e.abT = 99; return; }
+    const a = opts[Math.floor(this.r() * opts.length)];
+    e.abT = 7 + this.r() * 3;
+    if (a === 'summon') { for (let i = 0; i < 3; i++) { const s = this.spawn('swarm', e.race, e.pi, Math.max(0, e.d - 0.3 - i * 0.2), 0.8); s.off = (i - 1) * 0.2; } this.fx.push({ t: 'summon', x: e.x, z: e.z }); }
+    else if (a === 'heal') this.healAround(e, 2, 0.12);
+    else if (a === 'haste') { e.dash = 1.6; this.fx.push({ t: 'dash', x: e.x, z: e.z }); }
+    else if (a === 'emp') { let n = 0; for (const t of this.towers) if (t.kind !== 'factory' && Math.hypot(t.x - e.x, t.z - e.z) < 2.4) { t.stun = 3; n++; } this.fx.push({ t: 'emp', x: e.x, z: e.z, r: 2.4 }); }
+  }
   startWaveAuto() { const saved = this.nextIn; this.nextIn = 0; this.startWave(); }
   baseGun(dt) {
     const g = this.bgun; g.cd -= dt;
@@ -398,8 +511,10 @@ export class Game {
     }
     if (t.kind === 'support') return;
     const s = this.eff(t);
+    t.boosted = s.boosted;
     t.cd -= dt;
     t.beams = [];
+    if (t.stun > 0) { t.target = null; return; }
     const tg = this.pickTarget(t, s);
     t.target = tg ? tg.id : null;
     if (!tg) return;
@@ -416,7 +531,7 @@ export class Game {
         if (!nb) break; targets.push(nb); last = nb;
       }
       for (const e of targets) {
-        e.slow = Math.max(e.slow, e.type === 'boss' ? s.slow * 0.6 : s.slow); e.slowT = 0.35;
+        e.slow = Math.max(e.slow, e.type === 'boss' ? s.slow * 0.6 : s.slow); e.slowT = Math.max(e.slowT, this.pk.cryo_perma ? 1.5 : 0.35);
         this.damage(e, s.dps * dt, 'cryo', { beam: true, tower: t });
       }
       t.beams = targets.map(e => e.id);
@@ -426,7 +541,8 @@ export class Game {
     t.cd = 1 / s.rate;
     const mx = t.x + Math.sin(t.aim) * 0.35, mz = t.z + Math.cos(t.aim) * 0.35;
     this.fx.push({ t: 'muzzle', x: mx, z: mz, k: t.kind, a: t.aim, tid: t.id });
-    const base = { src: t.kind, tower: t, pierce: s.pierce || 0, splash: s.splash || 0, dmg: s.dmg };
+    t.shots++;
+    const base = { src: t.kind, tower: t, pierce: s.pierce || 0, splash: s.splash || 0, dmg: s.dmg, over: t.kind === 'energy' && this.pk.energy_over && t.shots % 3 === 0 };
     switch (T.proj) {
       case 'bullet': this.proj.push({ ...base, id: this.uid++, kind: 'bullet', x: mx, z: mz, y: 0.6, target: tg.id, tx: tg.x, tz: tg.z, speed: 16 }); break;
       case 'lob': {
@@ -452,7 +568,7 @@ export class Game {
         }
         const pts = [[t.x, t.z]].concat(hit.map(e => [e.x, e.z]));
         this.fx.push({ t: 'chain', pts });
-        hit.forEach((e, i) => this.damage(e, s.dmg * Math.pow(0.85, i), 'reaper', { tower: t, show: i === 0 }));
+        hit.forEach((e, i) => { this.damage(e, s.dmg * Math.pow(0.85, i), 'reaper', { tower: t, show: i === 0 }); if (this.pk.reaper_static && !e.dead) { e.slow = Math.max(e.slow, 0.3); e.slowT = Math.max(e.slowT, 1); } });
         break;
       }
     }
@@ -491,7 +607,11 @@ export class Game {
       for (const e of this.enemies) {
         if (e.dead || (e.air && !air)) continue;
         const d = Math.hypot(e.x - p.x, e.z - p.z);
-        if (d <= p.splash) { this.damage(e, p.dmg * (d < p.splash * 0.5 ? 1 : 0.6), p.src, { pierce: p.pierce, tower: p.tower, show: first }); first = false; }
+        if (d <= p.splash) {
+          const dealt = this.damage(e, p.dmg * (d < p.splash * 0.5 ? 1 : 0.6), p.src, { pierce: p.pierce, tower: p.tower, show: first, over: p.over }); first = false;
+          if (p.kind === 'lob' && this.pk.energy_burn && !e.dead) { e.burnDps = e.burn > 0 ? Math.max(e.burnDps, dealt * 0.15) : dealt * 0.15; e.burn = 2; e.burnBy = p.tower; }
+          if (p.kind === 'shell' && this.pk.naval_concuss && !e.dead && !e.air && e.type !== 'boss') e.d = Math.max(0, e.d - 0.35);
+        }
       }
     } else if (tg) {
       this.damage(tg, p.dmg, p.src, { pierce: p.pierce, tower: p.tower, show: p.kind === 'bolt' || p.dmg >= 25 });

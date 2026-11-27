@@ -14,6 +14,31 @@ export const ENEMIES = {
   flyer: { name: 'Glider', hp: 48, speed: 1.1, armor: 0, gold: 6, dmg: 1, air: true, r: 0.26 },
   brute: { name: 'Juggernaut', hp: 420, speed: 0.6, armor: 2, gold: 22, dmg: 3, r: 0.38 },
   boss:  { name: 'Warlord', hp: 2600, speed: 0.38, armor: 6, gold: 120, dmg: 10, r: 0.55, boss: true },
+  healer: { name: 'Mender', hp: 70, speed: 0.85, armor: 0, gold: 8, dmg: 1, r: 0.24, desc: 'Pulses repair energy that heals nearby enemies. Kill it first.' },
+  shield: { name: 'Bulwark', hp: 130, speed: 0.7, armor: 1, gold: 10, dmg: 2, r: 0.3, desc: 'Projects a barrier: enemies near it take 30% less damage.' },
+  splitter: { name: 'Hive Carrier', hp: 150, speed: 0.72, armor: 1, gold: 6, dmg: 2, r: 0.32, desc: 'Bursts into 3 Skitters when destroyed.' },
+  phantom: { name: 'Wraith', hp: 55, speed: 1.15, armor: 0, gold: 7, dmg: 1, r: 0.22, desc: 'Cloaks every few seconds. Towers cannot target it unless an Amplifier is near.' },
+};
+// first level each enemy type can appear in waves
+export const ENEMY_UNLOCK = { grunt: 0, swarm: 0, tank: 2, flyer: 3, brute: 6, healer: 9, shield: 13, splitter: 17, phantom: 21 };
+
+// Warlord abilities by world (endless mode mixes them)
+export const BOSS_ABIL = [['summon'], ['heal'], ['shield'], ['cloak', 'summon'], ['emp'], ['haste', 'shield'], ['emp', 'summon'], ['shield', 'emp', 'summon']];
+export const ABIL_TEXT = { summon: 'calls Skitter swarms', heal: 'heals itself and its troops', shield: 'raises barriers when wounded', cloak: 'cloaks from your towers', emp: 'EMP-stuns nearby towers', haste: 'charges forward in bursts' };
+
+// Level twists: rule changes that make each level play differently
+export const TWISTS = {
+  fog: { name: 'Dense Fog', icon: '☁', desc: 'Tower range −15%.' },
+  goldrush: { name: 'Gold Rush', icon: '$', desc: 'Factory coins +60%, but start with 25% less gold.' },
+  armored: { name: 'Armored Column', icon: '⛨', desc: 'Every enemy has +2 armor.' },
+  swift: { name: 'Swift Assault', icon: '»', desc: 'Enemies move 25% faster but have 15% less health.' },
+  storm: { name: 'Ion Storm', icon: 'ϟ', desc: 'Lightning knocks a random tower offline for 4s every so often.' },
+  supply: { name: 'Supply Drops', icon: '▣', desc: 'Crates fall from orbit. Tap them for gold.' },
+  regen: { name: 'Regeneration', icon: '✚', desc: 'Enemies heal when they go 2s without being hit.' },
+  bounty: { name: 'Bounty Hunt', icon: '☠', desc: 'Kills pay 40% more gold, but no Ore Factories.' },
+  airraid: { name: 'Air Raid', icon: '✈', desc: 'Extra Glider squadrons join the attack.' },
+  horde: { name: 'Horde', icon: '⁂', desc: 'Twice as many enemies, each with half the health.' },
+  scarce: { name: 'Scarce Ground', icon: '▦', desc: 'You can build at most 10 combat towers.' },
 };
 
 // Tower definitions. levels[0] = built, levels[1..2] = upgrades, then pick a branch with 2 more levels.
@@ -114,13 +139,24 @@ export const UNLOCKS = {
 };
 
 // Meta (emerald) upgrades
+export const PERKS = {
+  gun: [['gun_crit', 'Hollow Points', '15% chance to crit for 2.5× damage'], ['gun_tracer', 'Tracer Rounds', 'Sees cloaked Wraiths, +25% damage to fliers']],
+  energy: [['energy_burn', 'Plasma Burn', 'Splash sets ground on fire: 30% extra damage over 2s'], ['energy_over', 'Overcharge', 'Every 3rd shell deals double damage']],
+  cryo: [['cryo_brittle', 'Brittle', 'Slowed enemies take +15% damage from every tower'], ['cryo_perma', 'Permafrost', 'Slow lingers 1.5s after the beam stops']],
+  missile: [['missile_cluster', 'Cluster Warheads', '+35% splash radius'], ['missile_aa', 'Flak Seekers', '+40% damage to fliers']],
+  naval: [['naval_concuss', 'Concussion', 'Shells knock ground enemies back'], ['naval_shrap', 'Shrapnel', '+40% splash radius']],
+  reaper: [['reaper_static', 'Static Field', 'Arcs slow enemies by 30% for 1s'], ['reaper_tithe', 'Grim Tithe', '+2 soul gold per kill']],
+  destroyer: [['destroyer_shred', 'Armor Shred', 'Each hit strips 2 armor and breaks shields'], ['destroyer_exec', 'Executioner', 'Double damage to enemies under 30% health']],
+};
 function towerNodes(k) {
+  const pk = PERKS[k] || [];
   return [
     { id: k + '_dmg1', name: 'Damage I', cost: 15, eff: { dmg: 0.1 }, desc: '+10% damage' },
     { id: k + '_dmg2', name: 'Damage II', cost: 35, eff: { dmg: 0.12 }, desc: '+12% damage', req: k + '_dmg1' },
     { id: k + '_rng', name: 'Range', cost: 30, eff: { range: 0.1 }, desc: '+10% range', req: k + '_dmg1' },
     { id: k + '_cost', name: 'Discount', cost: 40, eff: { cost: 0.1 }, desc: '-10% build cost', req: k + '_rng' },
     { id: k + '_dmg3', name: 'Damage III', cost: 70, eff: { dmg: 0.15 }, desc: '+15% damage', req: k + '_dmg2' },
+    ...pk.map(([id, name, desc], i) => ({ id, name, cost: 60 + i * 25, eff: { perk: id }, desc, req: i ? k + '_dmg2' : k + '_rng', perk: true })),
   ];
 }
 export const META = {
@@ -129,9 +165,12 @@ export const META = {
       { id: 'factory_v1', name: 'Rich Ore I', cost: 20, eff: { coin: 0.15 }, desc: '+15% coin value' },
       { id: 'factory_v2', name: 'Rich Ore II', cost: 45, eff: { coin: 0.2 }, desc: '+20% coin value', req: 'factory_v1' },
       { id: 'factory_mag', name: 'Coin Magnet', cost: 60, eff: { magnet: 1 }, desc: 'Coins collect themselves after 3s', req: 'factory_v1' },
+      { id: 'factory_veins', name: 'Deep Veins', cost: 70, eff: { perk: 'factory_veins' }, desc: 'Factories mint coins 2s faster', req: 'factory_v2', perk: true },
     ]], ['support', [
       { id: 'support_b1', name: 'Resonance I', cost: 25, eff: { boost: 0.05 }, desc: '+5% boost' },
       { id: 'support_b2', name: 'Resonance II', cost: 55, eff: { boost: 0.07 }, desc: '+7% boost', req: 'support_b1' },
+      { id: 'support_jam', name: 'Jammer', cost: 60, eff: { perk: 'support_jam' }, desc: 'Enemies in range move 15% slower', req: 'support_b1', perk: true },
+      { id: 'support_break', name: 'Shield Breaker', cost: 85, eff: { perk: 'support_break' }, desc: 'Boosted towers ignore Bulwark barriers and deal +50% to shields', req: 'support_b2', perk: true },
     ]]])),
   weapon: Object.fromEntries(POWER_ORDER.map(k => [k, [
     { id: k + '_c1', name: 'Extra Charge', cost: 25, eff: { charges: 1 }, desc: '+1 charge per battle' },
@@ -159,6 +198,12 @@ export const META = {
       { id: 'tres1', name: 'War Chest I', cost: 25, eff: { gold: 0.08 }, desc: '+8% starting gold' },
       { id: 'tres2', name: 'War Chest II', cost: 50, eff: { gold: 0.08 }, desc: '+8% starting gold', req: 'tres1' },
       { id: 'tres3', name: 'War Chest III', cost: 90, eff: { gold: 0.1 }, desc: '+10% starting gold', req: 'tres2' },
+      { id: 'bank1', name: 'Interest', cost: 70, eff: { interest: 0.03 }, desc: '+3% interest on banked gold at each wave (max 30)', req: 'tres1' },
+    ],
+    salvage: [
+      { id: 'salv1', name: 'Salvage I', cost: 30, eff: { sell: 0.15 }, desc: 'Selling refunds 65%' },
+      { id: 'salv2', name: 'Salvage II', cost: 60, eff: { sell: 0.15 }, desc: 'Selling refunds 80%', req: 'salv1' },
+      { id: 'mend1', name: 'Temple Mending', cost: 110, eff: { mend: 1 }, desc: 'Regain 1 life after each wave you start with no leaks in the previous one', req: 'salv1' },
     ],
   },
 };
@@ -168,9 +213,10 @@ export function allMetaNodes() {
   return out;
 }
 export function metaEffects(owned) {
-  const e = { tower: {}, power: {}, life: 0, bgun: 0, dome: 0, gold: 0, coin: 0, magnet: 0, boost: 0 };
+  const e = { tower: {}, power: {}, life: 0, bgun: 0, dome: 0, gold: 0, coin: 0, magnet: 0, boost: 0, perks: {}, sell: 0, interest: 0, mend: 0 };
   for (const n of allMetaNodes()) {
     if (!owned[n.id]) continue;
+    if (n.eff.perk) { e.perks[n.eff.perk] = 1; continue; }
     if (n.tab === 'towers' && n.group !== 'factory' && n.group !== 'support') {
       const t = e.tower[n.group] || (e.tower[n.group] = { dmg: 0, range: 0, cost: 0 });
       for (const k in n.eff) t[k] += n.eff[k];

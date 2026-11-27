@@ -13,7 +13,7 @@ export class AutoPlayer {
       this.samples.push([P[i - 1][0] + (P[i][0] - P[i - 1][0]) * t, P[i - 1][1] + (P[i][1] - P[i - 1][1]) * t, d / p.len]);
     }
     let rust = 0, glim = 0, air = 0, armor = 0, tot = 0;
-    for (const w of g.L.waves) for (const gr of w) { const n = gr.count; tot += n; if (gr.race === 'rust') rust += n; else glim += n; if (gr.type === 'flyer') air += n; if (gr.type === 'tank' || gr.type === 'brute' || gr.type === 'boss') armor += n; }
+    for (const w of g.L.waves) for (const gr of w) { const n = gr.count; tot += n; if (gr.race === 'rust') rust += n; else glim += n; if (gr.type === 'flyer') air += n; if (gr.type === 'tank' || gr.type === 'brute' || gr.type === 'boss' || gr.type === 'shield' || gr.type === 'splitter') armor += n; if (gr.type === 'phantom') this.cloak = (this.cloak || 0) + n; }
     this.mix = { rust: rust / tot, glim: glim / tot, air: air / tot, armor: armor / tot };
   }
   coverage(x, z, r) { let c = 0; for (const s of this.samples) { const d = Math.hypot(s[0] - x, s[1] - z); if (d <= r) c += 0.6 + s[2]; } return c; }
@@ -77,7 +77,7 @@ export class AutoPlayer {
       if (c && g.towers.filter(t => t.kind === 'factory').length < 4) { g.build('factory', c.cx, c.cy); return true; }
     }
     // support
-    if (g.L.towers.includes('support') && combat.length >= 5 && g.cores >= 1 && g.gold >= buildCost('support', g.meta) && g.towers.filter(t => t.kind === 'support').length < 1 + Math.floor(combat.length / 7)) {
+    if (g.L.towers.includes('support') && combat.length >= (this.cloak ? 3 : 5) && g.cores >= 1 && g.gold >= buildCost('support', g.meta) && g.towers.filter(t => t.kind === 'support').length < 1 + Math.floor(combat.length / 7)) {
       const c = this.bestCell('support'); if (c && c.v >= 4) { g.build('support', c.cx, c.cy); return true; }
     }
     // best upgrade candidate
