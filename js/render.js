@@ -136,7 +136,7 @@ export class Renderer {
       Object.assign(this.ao.configuration, { aoRadius: 0.9, distanceFalloff: 0.6, intensity: 2.6, halfRes: true, gammaCorrection: false, transparencyAware: false, color: new THREE.Color(0x05080a) });   // transparencyAware re-renders every transparent fx a second time each frame
       this.ao.setQualityMode('Medium'); this.ao.enabled = false; this.composer.addPass(this.ao);
     } catch (e) { console.warn('n8ao', e); this.ao = null; }
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.4, 0.86);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.42, 0.45, 0.82);
     { const sz = this.bloom.setSize.bind(this.bloom); this.bloom.setSize = (w, h) => sz(Math.max(2, w >> 1), Math.max(2, h >> 1)); } // bloom is blurry anyway: run its mip chain from half-res
     this.composer.addPass(this.bloom);
     this.tiltH = new ShaderPass(TiltShader); this.tiltV = new ShaderPass(TiltShader); this.tiltV.uniforms.dir.value.set(0, 1);
@@ -179,7 +179,7 @@ export class Renderer {
     this.ready = true;
     this.buildMenuScene();
   }
-  // tiers: 1 Low (render+FXAA), 2 Med (+bloom, grade, shadows), 3 High (+N8AO half-res, tilt-shift, wind grass), 4 Ultra (+PCSS soft shadows, full-res AO, 4K shadow map, SMAA, parallax, grain/CA)
+  // tiers: 1 Low (render+FXAA), 2 Med (+bloom, grade, shadows), 3 High (+N8AO half-res, wind grass), 4 Ultra (+PCSS soft shadows, full-res AO, 4K shadow map, SMAA, parallax, subtle tilt-shift, grain/CA)
   // drawing-buffer DPR is capped by a per-tier cap AND a pixel budget (so a 3.5x flagship or a tablet never renders 4M+ pixels), then scaled by the governor's dprScale
   setQuality(q, keepScale = false) {
     this.quality = q; if (!keepScale) this.dprScale = 1;
@@ -190,10 +190,10 @@ export class Renderer {
     this.setPCSS(q >= 4);
     this.bloom.enabled = q >= 2;
     if (this.ao) { this.ao.enabled = q >= 3; this.renderPass.enabled = !this.ao.enabled; this.ao.configuration.halfRes = q < 4; this.ao.setQualityMode(q >= 4 ? 'Medium' : 'Low'); }
-    this.tiltH.enabled = this.tiltV.enabled = q >= 3;
+    this.tiltH.enabled = this.tiltV.enabled = q >= 4;
     this.grade.enabled = q >= 2;
     this.fxaa.enabled = q < 4; this.smaa.enabled = q >= 4;
-    this.grade.uniforms.grain.value = q >= 4 ? 0.035 : q >= 3 ? 0.018 : 0; this.grade.uniforms.ca.value = q >= 4 ? 0.012 : 0;
+    this.grade.uniforms.grain.value = q >= 4 ? 0.015 : 0; this.grade.uniforms.ca.value = q >= 4 ? 0.006 : 0;
     if (this.grassMesh) { this.grassMesh.visible = q >= 3; const f = q >= 4 ? 1 : 0.65; for (const c of this.grassMesh.userData.chunks) c.count = Math.ceil(c.userData.max * f); }
     if (this.uPar) this.uPar.value = q >= 4 ? 0.035 : 0;
     if (this.tuftMesh) this.tuftMesh.count = Math.floor(this.tuftMesh.userData.max * (q >= 3 ? 1 : q === 2 ? 0.6 : 0.25));
@@ -228,7 +228,7 @@ export class Renderer {
     const pw = w * this._dpr, ph = h * this._dpr;
     for (const t of [this.tiltH, this.tiltV]) t.uniforms.res.value.set(pw, ph);
     this.fxaa.uniforms.resolution.value.set(1 / pw, 1 / ph);
-    this.grade.uniforms.res.value.set(pw, ph); this.tiltH.uniforms.amt.value = this.tiltV.uniforms.amt.value = 1.6 * this._dpr;
+    this.grade.uniforms.res.value.set(pw, ph); this.tiltH.uniforms.amt.value = this.tiltV.uniforms.amt.value = 0.9 * this._dpr;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     this.w = w; this.h = h;
     if (this.inBattle) this.fit(); else if (this.menu) this.menuCam();
@@ -401,6 +401,7 @@ export class Renderer {
     this.hemi.color.set(0x8090c0); this.hemi.groundColor.set(0x101020); this.hemi.intensity = 0.4;
     this.sun.color.set(0xfff4e0); this.sun.intensity = 3.2;
     this.grade.uniforms.sat.value = 1.1; this.grade.uniforms.con.value = 1.05; this.grade.uniforms.tint.value.set(1, 1, 1); this.grade.uniforms.vig.value = 0.4;
+    this.renderer.toneMappingExposure = 1.0; this.bloom.threshold = 0.86;
     this.menuCam();
   }
   menuCam() {
@@ -446,9 +447,14 @@ export class Renderer {
     this.dyn.add(this.points); this.dyn.add(this.points2);
     this.scene.background = new THREE.Color(B.sky);
     this.scene.fog = new THREE.Fog(B.fog, 34, 70);
-    this.hemi.color.set(B.hs); this.hemi.groundColor.set(B.hg); this.hemi.intensity = B.hI;
-    this.sun.color.set(B.sun); this.sun.intensity = B.sunI;
-    const [sat, con, tint] = B.grade; this.grade.uniforms.sat.value = sat; this.grade.uniforms.con.value = con; this.grade.uniforms.tint.value.set(...tint); this.grade.uniforms.vig.value = 0.34;
+    // "vivid" style: punchier colour and brighter shadow fill than the photo-real grade, so units and FX read at a glance on a phone
+    // bright ground (snow, sand, pale stone) would bloom and wash out: those biomes get less exposure and a higher bloom threshold
+    const bright = { frost: [0.86, 0.97, 1.0], reef: [1.0, 0.9, 1.1], sky: [1.0, 0.9, 1.1] }[L.biome] || [1.1, 0.82, 1.2];
+    this.hemi.color.set(B.hs); this.hemi.groundColor.set(B.hg); this.hemi.intensity = B.hI * bright[2];
+    this.sun.color.set(B.sun); this.sun.intensity = B.sunI * 1.05;
+    this.bloom.threshold = bright[1];
+    const [sat, con, tint] = B.grade; this.grade.uniforms.sat.value = sat + 0.16; this.grade.uniforms.con.value = con + 0.04; this.grade.uniforms.tint.value.set(...tint); this.grade.uniforms.vig.value = 0.2;
+    this.renderer.toneMappingExposure = bright[0];
     this.buildTerrain(L, B);
     this.buildDeco(L, B);
     const base = baseMesh(B, !!game.bgun); base.position.set(cellX(L.base[0]), 0, cellZ(0.5)); this.level.add(base); this.baseGroup = base;

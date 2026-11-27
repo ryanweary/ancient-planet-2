@@ -218,6 +218,7 @@ function enemyMats(src, race, type, P) {
     } else { m.metalness = 0.6; m.roughness = 0.35; }
     if (type === 'boss') m.color.lerp(new THREE.Color(0x601010), 0.35);
     if (TINT[type]) { m.color.lerp(new THREE.Color(TINT[type]), 0.55); m.emissive = new THREE.Color(TINT[type]).multiplyScalar(0.25); m.emissiveIntensity = 1; }
+    rimify(m, TINT[type] || 0xff8a30, 0.55);
     return m;
   }
   // glim: glassy teal crystal-flesh with a fresnel rim glow

@@ -393,7 +393,7 @@ function specialDress(grp, type, hbY) {
     const ring = add(new THREE.Mesh(geoC('hring', () => new THREE.RingGeometry(0.42, 0.5, 32)), spMat('hringm', () => new THREE.MeshBasicMaterial({ color: 0x60ff80, transparent: true, opacity: 0.45, depthWrite: false }))));
     ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; u.ring = ring;
   } else if (type === 'shield') {
-    const dome = add(new THREE.Mesh(geoC('bdome', () => new THREE.SphereGeometry(1, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2)), spMat('bdomem', () => new THREE.MeshBasicMaterial({ color: 0x60b0ff, transparent: true, opacity: 0.13, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }))));
+    const dome = add(new THREE.Mesh(geoC('bdome', () => new THREE.SphereGeometry(1, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2)), spMat('bdomem', () => new THREE.MeshBasicMaterial({ color: 0x3a8cff, transparent: true, opacity: 0.07, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }))));
     dome.scale.set(0.96, 0.55, 0.96); u.dome = dome;   // 1.3 world-unit barrier ÷ 1.35 enemy scale
     const ring = add(new THREE.Mesh(geoC('bring', () => new THREE.RingGeometry(0.9, 0.96, 48)), spMat('bringm', () => new THREE.MeshBasicMaterial({ color: 0x80c8ff, transparent: true, opacity: 0.55, depthWrite: false }))));
     ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; u.ring = ring;

@@ -76,9 +76,9 @@ export class Game {
     this.r = rng(level.seed * 13 + 1);
     this.grid = level.grid.slice();
     this.paths = level.paths.map(buildPath);
-    this.hpMul = hpMul(level.idx) * (this.easy ? 0.68 : 1);
+    this.hpMul = (level.hpBase || hpMul(level.idx)) * (this.easy ? 0.68 : 1);
     this.goldMul = 1 + level.idx * 0.025;
-    this.gold = Math.round(level.startGold * (1 + this.meta.gold) * (this.easy ? 1.25 : 1) * (this.tw.goldrush ? 0.75 : 1));
+    this.gold = Math.round(level.startGold * (1 + this.meta.gold) * (this.easy ? 1.25 : 1) * (this.tw.goldrush ? 0.75 : 1) * (this.tw.bounty ? 1.35 : 1));
     this.stormT = 14; this.supplyT = 20; this.waveLeaks = 0;
     this.cores = 1 + (level.idx >= 5 ? 1 : 0);
     this.maxLife = 20 + this.meta.life + (this.easy ? 10 : 0);
@@ -110,7 +110,7 @@ export class Game {
   combatCount() { let n = 0; for (const t of this.towers) if (t.kind !== 'factory') n++; return n; }
   capped(kind) { return !!this.tw.scarce && kind !== 'factory' && this.combatCount() >= 10; }
   canBuild(kind, cx, cy) {
-    if (this.towerAt.has(cy * GW + cx)) return false;
+    if (this.towerAt.has(cy * GW + cx) || !this.L.towers.includes(kind)) return false;
     if (this.capped(kind)) return false;
     const v = this.cell(cx, cy);
     const T = TOWERS[kind];
@@ -231,7 +231,7 @@ export class Game {
   kill(e, tower) {
     e.dead = true;
     const E = ENEMIES[e.type];
-    let g = Math.round(E.gold * this.goldMul * (this.tw.bounty ? 1.4 : 1) * (this.tw.horde && !E.boss ? 0.55 : 1) * (this.L.endless ? this.L.goldK || 1 : 1));
+    let g = Math.round(E.gold * this.goldMul * (this.tw.bounty ? 1.8 : 1) * (this.tw.horde && !E.boss ? 0.55 : 1) * (this.L.endless ? this.L.goldK || 1 : 1));
     if (tower) { tower.kills++; if (tower.kind === 'reaper') g += towerStats('reaper', tower.lvl, tower.branch, this.meta).soul || 1; }
     if (e.type === 'splitter') for (let i = 0; i < 3; i++) { const s = this.spawn('swarm', e.race, e.pi, Math.max(0, e.d - 0.25 * i), 0.5 * (this.tw.horde ? 2 : 1)); s.off = (i - 1) * 0.18; }
     this.gold += g; this.stats.gold += g; this.stats.kills++;

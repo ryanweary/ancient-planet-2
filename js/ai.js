@@ -72,9 +72,9 @@ export class AutoPlayer {
     const combat = g.towers.filter(t => t.kind !== 'factory' && t.kind !== 'support');
     // factories early
     const facCost = buildCost('factory', g.meta);
-    if (g.wave <= g.nWaves * 0.6 && combat.length >= 1 && g.gold >= facCost) {
+    if (g.L.towers.includes('factory') && g.wave <= g.nWaves * 0.6 && combat.length >= 1 && g.gold >= facCost) {
       const c = this.bestCell('factory');
-      if (c && g.towers.filter(t => t.kind === 'factory').length < 4) { g.build('factory', c.cx, c.cy); return true; }
+      if (c && g.towers.filter(t => t.kind === 'factory').length < 4 && g.build('factory', c.cx, c.cy)) return true;
     }
     // support
     if (g.L.towers.includes('support') && combat.length >= (this.cloak ? 3 : 5) && g.cores >= 1 && g.gold >= buildCost('support', g.meta) && g.towers.filter(t => t.kind === 'support').length < 1 + Math.floor(combat.length / 7)) {

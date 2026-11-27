@@ -959,7 +959,8 @@ window.__ap2 = {
 const ld = $('#loading'); ld.style.opacity = 0; setTimeout(() => ld.remove(), 500);
 const lv = Q.get('level');
 if (lv) { let i; if (lv.includes('-')) { const [a, b] = lv.split('-').map(Number); i = (a - 1) * 5 + (b - 1); } else i = (+lv) - 1; startLevel(Math.max(0, Math.min(NL - 1, i | 0))); }
+else if (Q.get('endless')) startLevel(-1 - Math.max(0, Math.min(7, (+Q.get('endless') || 1) - 1)));
 else if (Q.get('screen')) go(Q.get('screen'));
 else showTitle();
 requestAnimationFrame(loop);
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=6').catch(() => { });
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=7').catch(() => { });

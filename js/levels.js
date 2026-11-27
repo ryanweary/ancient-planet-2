@@ -168,14 +168,15 @@ export function genLevel(idx, seedOff = 0) {
   throw new Error('level gen failed ' + idx);
 }
 
-// per-level enemy HP multipliers, calibrated by simulation (see ap2-test/capacity.mjs)
-export const HP_TABLE = [0.44, 0.57, 0.74, 0.96, 1.25, 1.32, 1.72, 2.24, 2.91, 3.54, 4.54, 4.59, 5.97, 6.19, 5.88, 7.01, 9.11, 9.53, 9.05, 8.84, 11.49, 12.52, 11.89, 11.45, 10.88, 14.14, 13.43, 15.76, 20.31, 23.73, 20.74, 21.41, 20.5, 19.47, 25.31, 25.9, 26.51, 31.01, 29.47, 27.99];
+// per-level enemy HP multipliers, fitted by simulation with twists, new enemies and typical upgrades (node tests/balance.mjs fit);
+// world 1 is capped at 1.5x the original values: the AI collects coins instantly, new players are still learning
+export const HP_TABLE = [0.62, 0.85, 1.11, 1.44, 1.88, 1.15, 3.95, 3.99, 5.84, 3.35, 2.68, 6.95, 4.8, 5.79, 5.56, 5.48, 11.1, 11.24, 9.69, 9.26, 9.85, 16.28, 15.05, 17.9, 10.51, 19.63, 9.22, 23.85, 22.7, 13.77, 16.84, 8.79, 16.03, 15.39, 19.47, 15.2, 11.3, 35.61, 21.24, 22.12];
 export const TUNE = { scale: 1, wave: 0.2 };
 export function hpMul(idx) { return HP_TABLE[idx] * TUNE.scale; }
 
 function waveGroups(idx, w, nW, nPaths, r, twists, endless = false) {
   const world = Math.floor(idx / 5), l = idx % 5;
-  const allowed = Object.keys(ENEMY_UNLOCK).filter(k => ENEMY_UNLOCK[k] <= idx);
+  const allowed = Object.keys(ENEMY_UNLOCK).filter(k => k !== 'boss' && ENEMY_UNLOCK[k] <= idx);
   const raceBias = [0.75, 0.3, 0.6, 0.35, 0.8, 0.4, 0.55, 0.5][world];
   const base = 230 * (idx === 0 ? 0.7 : 1);
   const budget = base * Math.pow(1 + TUNE.wave * Math.min(w, endless ? 14 : 99), 1.3) * (1 + idx * 0.012);
@@ -227,6 +228,7 @@ function genWaves(idx, nPaths, r, twists = []) {
 
 // ---------------- Endless mode ----------------
 // A fresh map in a chosen world; waves are generated on demand. Every 10th wave brings a Warlord, and every 10 waves a new mutation (twist) stacks on.
+export const ENDLESS_HP = 6;   // tuned with tests/balance.mjs endless: ~wave 22-35 with mid-campaign upgrades, 40+ with a full tree
 const MUTATIONS = ['swift', 'armored', 'regen', 'fog', 'airraid', 'storm', 'horde'];
 export function genEndless(world, seed = 1) {
   const idx = world * 5 + 2;
@@ -237,6 +239,7 @@ export function genEndless(world, seed = 1) {
   L.towers = Object.keys(UNLOCKS.tower).filter(k => UNLOCKS.tower[k] <= Math.max(idx, 20));
   L.powers = Object.keys(UNLOCKS.power).filter(k => UNLOCKS.power[k] <= Math.max(idx, 16));
   L.bossAbil = BOSS_ABIL[world];
+  L.hpBase = ENDLESS_HP;   // same base in every world (the campaign table bakes in twist compensation); the map and enemy mix set the rest
   L.hpScale = w => Math.pow(1.085, Math.max(0, w - 1)) * (1 + Math.max(0, w - 30) * 0.03);
   L.goldK = 1;
   const pool = MUTATIONS.slice();

@@ -20,7 +20,7 @@ export const ENEMIES = {
   phantom: { name: 'Wraith', hp: 55, speed: 1.15, armor: 0, gold: 7, dmg: 1, r: 0.22, desc: 'Cloaks every few seconds. Towers cannot target it unless an Amplifier is near.' },
 };
 // first level each enemy type can appear in waves
-export const ENEMY_UNLOCK = { grunt: 0, swarm: 0, tank: 2, flyer: 3, brute: 6, healer: 9, shield: 13, splitter: 17, phantom: 21 };
+export const ENEMY_UNLOCK = { grunt: 0, swarm: 0, tank: 2, flyer: 3, boss: 4, brute: 6, healer: 9, shield: 13, splitter: 17, phantom: 21 };
 
 // Warlord abilities by world (endless mode mixes them)
 export const BOSS_ABIL = [['summon'], ['heal'], ['shield'], ['cloak', 'summon'], ['emp'], ['haste', 'shield'], ['emp', 'summon'], ['shield', 'emp', 'summon']];
@@ -35,7 +35,7 @@ export const TWISTS = {
   storm: { name: 'Ion Storm', icon: 'ϟ', desc: 'Lightning knocks a random tower offline for 4s every so often.' },
   supply: { name: 'Supply Drops', icon: '▣', desc: 'Crates fall from orbit. Tap them for gold.' },
   regen: { name: 'Regeneration', icon: '✚', desc: 'Enemies heal when they go 2s without being hit.' },
-  bounty: { name: 'Bounty Hunt', icon: '☠', desc: 'Kills pay 40% more gold, but no Ore Factories.' },
+  bounty: { name: 'Bounty Hunt', icon: '☠', desc: 'No Ore Factories, but kills pay 80% more gold and you start with 35% more.' },
   airraid: { name: 'Air Raid', icon: '✈', desc: 'Extra Glider squadrons join the attack.' },
   horde: { name: 'Horde', icon: '⁂', desc: 'Twice as many enemies, each with half the health.' },
   scarce: { name: 'Scarce Ground', icon: '▦', desc: 'You can build at most 10 combat towers.' },
