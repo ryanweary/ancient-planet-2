@@ -449,7 +449,7 @@ export class Game {
       this.supplyT -= dt;
       if (this.supplyT <= 0) {
         this.supplyT = 22 + this.r() * 10;
-        const free = []; for (let y = 2; y < GH; y++) for (let x = 0; x < GW; x++) if (this.cell(x, y) === C.FREE && !this.towerAt.has(y * GW + x)) free.push([x, y]);
+        const free = []; for (let y = 2; y < GH - 1; y++) for (let x = 1; x < GW - 1; x++) if (this.cell(x, y) === C.FREE && !this.towerAt.has(y * GW + x)) free.push([x, y]);
         if (free.length) { const [x, y] = free[Math.floor(this.r() * free.length)]; this.coins.push({ id: this.uid++, x: cellX(x), z: cellZ(y), v: Math.round(30 + 12 * Math.sqrt(this.hpMul) * 3), t: 0, life: 10, crate: true }); this.fx.push({ t: 'crateDrop', x: cellX(x), z: cellZ(y) }); }
       }
     }

@@ -243,7 +243,7 @@ export class Renderer {
     // Look slightly south of center so the nearer (bottom) edge isn't eaten by perspective + the HUD.
     const pitch = this.pitch, lookZ = 1.1;
     const corners = [[-GW / 2, 0, -GH / 2 - 0.3], [GW / 2, 0, -GH / 2 - 0.3], [-GW / 2, 0, GH / 2 + 0.3], [GW / 2, 0, GH / 2 + 0.3], [0, 1.9, -GH / 2 + 0.6]];
-    const v = new THREE.Vector3(), insT = 52, insB = 108, insX = 10;
+    const v = new THREE.Vector3(), insT = 52, insB = 108, insX = 64;   // insX: side trays
     const saved = this.camera.position.clone();
     let lo = 4, hi = 90;
     for (let k = 0; k < 22; k++) {
@@ -281,8 +281,10 @@ export class Renderer {
     sc.left = -this.viewHalfW - pad; sc.right = this.viewHalfW + pad; sc.top = this.viewHalfD + pad + 2; sc.bottom = -this.viewHalfD - pad; sc.updateProjectionMatrix();
   }
   panLimits() {
-    const hx = Math.max(0, GW / 2 + 0.6 - this.viewHalfW);
-    const zMin = -GH / 2 - 1.4, zMax = GH / 2 + 0.6;
+    // let the board's edge columns slide clear of the tower tray (left) and power tray (right), and the bottom row clear of the corner buttons
+    const k = 2 * this.viewHalfW / this.w, trayX = 66 * k;
+    const hx = Math.max(0, GW / 2 + 0.6 + trayX - this.viewHalfW);
+    const zMin = -GH / 2 - 1.4, zMax = GH / 2 + 0.6 + 60 * k / Math.sin(this.pitch);
     const useHalf = this.viewHalfD * Math.max(0.5, (this.h - 110) / this.h);
     const mid = this.lookOutZ ?? ((zMin + zMax) / 2);
     return { x0: -hx, x1: hx, z0: Math.min(zMin + useHalf, mid), z1: Math.max(zMax - useHalf, mid) };

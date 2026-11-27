@@ -1,5 +1,5 @@
 // network-first cache so the game works offline after one visit
-const CACHE = 'ap2-v7';
+const CACHE = 'ap2-v8';
 self.addEventListener('install', e => { self.skipWaiting(); });
 self.addEventListener('activate', e => {
   e.waitUntil((async () => {

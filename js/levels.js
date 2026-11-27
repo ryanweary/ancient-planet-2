@@ -143,6 +143,20 @@ export function genLevel(idx, seedOff = 0) {
     const nR = ri(r, 6, 11);
     f = free();
     for (let i = 0; i < nR && f.length; i++) { const j = Math.floor(r() * f.length); const [x, y] = f.splice(j, 1)[0]; if (!nearPath(x, y) || r() < 0.35) set(x, y, C.ROCK); }
+    // keep everything you tap (crosshair rocks, beacons, ore deposits) off the outer columns and the bottom row, where the
+    // side trays and corner buttons cover the board; nearest free interior tile, no RNG used so paths and waves are unchanged
+    const edge = (x, y) => x === 0 || x === GW - 1 || y === GH - 1;
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      const v = get(x, y);
+      if (!edge(x, y) || (v !== C.TARGET && v !== C.BEACON && v !== C.DEPOSIT)) continue;
+      let best = null, bd = 1e9;
+      for (let yy = 2; yy < GH - 1; yy++) for (let xx = 1; xx < GW - 1; xx++) {
+        if (get(xx, yy) !== C.FREE) continue;
+        if (v !== C.DEPOSIT && !nearPath(xx, yy)) continue;
+        const d = Math.hypot(xx - x, yy - y); if (d < bd) { bd = d; best = [xx, yy]; }
+      }
+      set(x, y, C.FREE); if (best) set(best[0], best[1], v);
+    }
     // sanity: enough buildable cells near path
     const buildNear = free().filter(([x, y]) => nearPath(x, y)).length;
     if (buildNear < 14) continue;
