@@ -12,7 +12,8 @@ const DECO = {
   moon_rock_01: 155, moon_rock_03: 131, moon_rock_05: 133, tree_stump_01: 272, dead_tree_trunk: 229, shrub_03: 212, fern_02: 150,
   quiver_tree_02: 258, dead_quiver_trunk: 178, old_military_crate: 179, barrel_03: 156, coast_rocks_01: 176,
 };
-const ENEMY = { e_rust_grunt: 103, e_rust_tank: 126, e_rust_flyer: 74, e_rust_brute: 95, e_spider: 131, e_glim_tank: 62, e_glim_brute: 159, e_glim_boss: 139, e_glim_flyer: 69 };
+const ENEMY = { e_rust_grunt: 103, e_rust_tank: 126, e_rust_flyer: 74, e_rust_brute: 95, e_spider: 131, e_glim_tank: 62, e_glim_brute: 159, e_glim_boss: 139, e_glim_flyer: 69,
+  e_mech_leela: 155, e_mech_stan: 265, e_mech_george: 310, e_mech_mike: 260, e_mon_slime: 60, e_mon_skeleton: 51, e_mon_bat: 256, e_mon_dragon: 260 };
 
 export const A = { ready: false, deco: {}, enemy: {}, trees: null };
 
@@ -186,14 +187,18 @@ export class TreeBatch {
 
 // ---------- animated enemies ----------
 const MAP = {
-  rust: { grunt: 'e_rust_grunt', swarm: 'e_spider', tank: 'e_rust_tank', flyer: 'e_rust_flyer', brute: 'e_rust_brute', boss: 'e_rust_tank', healer: 'e_rust_grunt', shield: 'e_rust_tank', splitter: 'e_rust_brute', phantom: 'e_rust_grunt' },
-  glim: { grunt: 'e_spider', swarm: 'e_spider', tank: 'e_glim_tank', flyer: 'e_glim_flyer', brute: 'e_glim_brute', boss: 'e_glim_boss', healer: 'e_spider', shield: 'e_glim_tank', splitter: 'e_glim_brute', phantom: 'e_spider' },
+  // Rustborn: textured, weathered walking mechs (Quaternius Animated Mech Pack) for the core infantry, older robots for the support units
+  rust: { grunt: 'e_mech_leela', swarm: 'e_spider', tank: 'e_mech_stan', flyer: 'e_rust_flyer', brute: 'e_mech_george', boss: 'e_mech_mike', healer: 'e_rust_grunt', shield: 'e_rust_tank', splitter: 'e_rust_brute', phantom: 'e_mech_leela' },
+  // Glimmerkin: crystal-flesh creatures; every type has its own body now
+  glim: { grunt: 'e_mon_slime', swarm: 'e_spider', tank: 'e_glim_tank', flyer: 'e_mon_bat', brute: 'e_glim_brute', boss: 'e_glim_boss', healer: 'e_glim_flyer', shield: 'e_glim_tank', splitter: 'e_mon_dragon', phantom: 'e_mon_skeleton' },
 };
 // target size in world units (before the renderer's global 1.35 enemy scale)
 const SIZE = { grunt: 0.52, swarm: 0.3, tank: 0.62, flyer: 0.5, brute: 0.85, boss: 1.55, healer: 0.5, shield: 0.68, splitter: 0.72, phantom: 0.52 };
 // special enemies get a distinct body colour so they read instantly
 const TINT = { healer: 0x60ff80, shield: 0x60a0ff, splitter: 0xe060ff, phantom: 0x8060c0 };
-const CLIP = { ground: ['Walk', 'Run', 'Spider_Walk'], swarm: ['Run', 'Spider_Walk', 'Walk'], air: ['Fast_Flying', 'Flying_Idle', 'Run', 'Walk', 'Idle'] };
+// per-model size correction: the mechs are tall and spindly (sizing by height shrinks their bodies), the slime is wide and low
+const MSCALE = { e_mech_leela: 1.4, e_mech_stan: 1.35, e_mech_george: 1.35, e_mech_mike: 1.3, e_mon_slime: 0.62, e_mon_skeleton: 1.1, e_mon_dragon: 0.95, e_mon_bat: 1.05 };
+const CLIP = { ground: ['Walk', 'Run', 'Spider_Walk', 'Slime_Walk', 'Skeleton_Running', 'Dragon_Flying', 'Fast_Flying', 'Flying_Idle'], swarm: ['Run', 'Spider_Walk', 'Walk'], air: ['Fast_Flying', 'Flying_Idle', 'Bat_Flying', 'Dragon_Flying', 'Run', 'Walk', 'Idle'] };
 export const hasEnemyGLB = (type, race) => !!A.enemy[MAP[race === 'rust' ? 'rust' : 'glim'][type]];
 
 function rimify(m, rim, k = 1) {
@@ -211,6 +216,14 @@ function enemyMats(src, race, type, P) {
   const eye = n.includes('eye') && !n.includes('white') || n === 'eye';
   if (eye || n.includes('eye_white')) { m.color.set(P.acc); m.emissive = new THREE.Color(P.acc); m.emissiveIntensity = eye ? 2.4 : 1.4; m.roughness = 0.2; return m; }
   if (R) {
+    if (src.map) {
+      // hand-painted, weathered mech textures: keep the paint, rust and decals; warm them toward the Rustborn palette
+      m.color.set(0xffffff).lerp(new THREE.Color(0xffb080), 0.18); m.metalness = 0.45; m.roughness = 0.55;
+      if (type === 'boss') { m.color.lerp(new THREE.Color(0xff5030), 0.35); m.emissive = new THREE.Color(0x401008); m.emissiveIntensity = 1; }
+      if (TINT[type]) { m.color.lerp(new THREE.Color(TINT[type]), 0.5); m.emissive = new THREE.Color(TINT[type]).multiplyScalar(0.2); m.emissiveIntensity = 1; }
+      rimify(m, TINT[type] || 0xff8a30, 0.5);
+      return m;
+    }
     if (n.includes('edge') || n.includes('dark') || n.includes('black') || n.includes('grey')) { m.color.multiplyScalar(0.55); m.metalness = 0.75; m.roughness = 0.35; }
     else if (n.includes('main') || n.startsWith('material')) {
       // re-paint the white/gold shells in the rust armour palette
@@ -221,21 +234,52 @@ function enemyMats(src, race, type, P) {
     rimify(m, TINT[type] || 0xff8a30, 0.55);
     return m;
   }
-  // glim: glassy teal crystal-flesh with a fresnel rim glow
-  if (n.includes('black') || n.includes('dark') || n.includes('secondary') || n.includes('horn') || n === 'material.001') { m.color.set(P.dark); m.roughness = 0.25; m.metalness = 0.2; rimify(m, P.acc, 0.35); return m; }
-  const l = m.color.getHSL({}).l;
-  m.color.set(P.body).multiplyScalar(0.75 + l * 0.4); m.roughness = 0.18; m.metalness = 0.15; m.emissive = new THREE.Color(0x0a5a48); m.emissiveIntensity = 0.45;
-  if (type === 'boss') m.color.lerp(new THREE.Color(0x60ff90), 0.25);
-  if (TINT[type]) m.color.lerp(new THREE.Color(TINT[type]), 0.55);
-  rimify(m, TINT[type] || 0x60ffe0, 0.9);
+  // Glimmerkin: living crystal. Keep the model's own light/dark structure (belly, wings, claws read as different facets),
+  // mapped onto a teal-to-mint crystal ramp, with an inner glow and a bright fresnel rim
+  const l = m.color.getHSL({}, THREE.SRGBColorSpace).l;
+  const deep = new THREE.Color(P.dark), mid = new THREE.Color(P.body), hi = new THREE.Color(0x70f0d0);
+  const c = l < 0.25 ? deep.clone().lerp(mid, l / 0.25) : mid.clone().lerp(hi, Math.min(0.55, (l - 0.25) * 0.9));
+  const tint = TINT[type] ? new THREE.Color(TINT[type]) : null;
+  if (tint) c.lerp(tint, 0.5);
+  if (type === 'boss') c.lerp(new THREE.Color(0x60ff90), 0.2);
+  m.color.copy(c); m.map = null;
+  const darkPart = l < 0.12 || n.includes('black') || n.includes('dark') || n.includes('claws') || n.includes('horn');
+  m.roughness = darkPart ? 0.35 : 0.32; m.metalness = darkPart ? 0.35 : 0.15; m.envMapIntensity = 0.7;
+  m.emissive = (tint || mid).clone().multiplyScalar(darkPart ? 0.08 : 0.22); m.emissiveIntensity = 1;
+  rimify(m, tint ? tint.getHex() : 0x7affe8, darkPart ? 0.45 : 0.75);
   return m;
+}
+// Glimmerkin are living crystal: a cluster of glowing shards grows from the spine/head bone, so it rides the animation
+const shardGeo = (() => { let g = null; return () => g || (g = new THREE.OctahedronGeometry(1, 0).scale(0.35, 1, 0.35)); })();
+const shardMats = {};
+function crystalize(model, type, k, P) {
+  let bone = null, best = 1e9;
+  const pref = [/spine|chest|torso|body/i, /head/i, /hips|root|pelvis/i];
+  let first = null;
+  model.traverse(o => { if (!o.isBone) return; if (!first) first = o; for (let i = 0; i < pref.length; i++) if (pref[i].test(o.name) && i < best) { best = i; bone = o; } });
+  bone = bone || (first && (first.children.find(c => c.isBone) || first));
+  if (!bone) return;
+  const col = TINT[type] || (type === 'boss' ? 0x9fff70 : P.acc);
+  const mat = shardMats[col] || (shardMats[col] = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.55, roughness: 0.15, metalness: 0.1, flatShading: true }));
+  // bone space is in the model's original units: divide by the bone's world scale so shards come out a fixed world size
+  model.updateMatrixWorld(true); const ws = new THREE.Vector3(); bone.getWorldScale(ws); const u = 1 / (Math.abs(ws.x) || 1);   // world scale already includes the model's fit scale
+  const n = type === 'boss' ? 7 : type === 'brute' || type === 'tank' || type === 'shield' ? 5 : type === 'swarm' ? 2 : 4;
+  const sz = Math.min(SIZE[type] || 0.5, 0.72) * 0.3 * u;   // capped: big bodies get more shards, not bigger ones
+  const grp = new THREE.Group(); grp.name = 'shards';
+  for (let i = 0; i < n; i++) {
+    const m = new THREE.Mesh(shardGeo(), mat); const a = (i / n) * Math.PI * 2, r = sz * 0.6;
+    m.position.set(Math.cos(a) * r, sz * (0.6 + (i % 2) * 0.3), Math.sin(a) * r - sz * 0.4);
+    m.rotation.set(Math.sin(a) * 0.5 - 0.3, a, Math.cos(a) * 0.5);
+    m.scale.setScalar(sz * (0.7 + ((i * 37) % 10) / 20)); m.castShadow = false; grp.add(m);
+  }
+  bone.add(grp);
 }
 export function glbEnemy(type, race, P) {
   const R = race === 'rust' ? 'rust' : 'glim'; const src = A.enemy[MAP[R][type]]; if (!src) return null;
   const model = SkeletonUtils.clone(src.scene);
   const air = type === 'flyer';
   const target = SIZE[type] || 0.5; const dim = air ? Math.max(src.size.x, src.size.z) : Math.max(src.size.y, src.size.x * 0.7);
-  const k = target / dim; model.scale.setScalar(k); model.position.y = -src.minY * k;
+  const k = target / dim * (MSCALE[MAP[R][type]] || 1); model.scale.setScalar(k); model.position.y = -src.minY * k;
   const mats = []; const cache = new Map();
   model.traverse(o => {
     if (!o.isMesh) return;
@@ -249,6 +293,7 @@ export function glbEnemy(type, race, P) {
   const walk = pick(type === 'swarm' ? CLIP.swarm : air ? CLIP.air : CLIP.ground);
   const act = walk ? mixer.clipAction(walk) : null; if (act) { act.play(); act.time = Math.random() * walk.duration; }
   const death = src.clips.find(c => /Death|Dead/.test(c.name));
+  if (R === 'glim') crystalize(model, type, k, P);
   return { model, mixer, act, death, mats, k };
 }
 

@@ -37,7 +37,7 @@ The HD pass renders the game with Three.js r169 and four quality tiers (Low / Me
 
 **Textures and HDRI.** All are CC0 from [Poly Haven](https://polyhaven.com). The 24 terrain sets are in `assets/terrain/` (KTX2), a few prop textures are in `assets/tex/`, and the HDRI is `assets/sky.hdr`.
 
-**Models.** Rocks, stumps, ferns, shrubs, crates and palms are CC0 photoscans from Poly Haven. Trees are impostors baked from Poly Haven's high-poly CC0 trees. Enemies are skinned, animated CC0 models by Quaternius. All are compressed with meshopt, KTX2 and WebP. Towers and the temple base are still procedural multi-part models built in code (`js/gfx/models.js`). **See [CREDITS.md](CREDITS.md) for every asset, its author and its licence.**
+**Models.** Rocks, stumps, ferns, shrubs, crates and palms are CC0 photoscans from Poly Haven. Trees are impostors baked from Poly Haven's high-poly CC0 trees. Enemies are skinned, animated CC0 models by Quaternius: textured, weathered walking mechs for the Rustborn, and crystal creatures with glowing shards for the Glimmerkin. All are compressed with meshopt, KTX2 and WebP. Towers and the temple base are still procedural multi-part models built in code (`js/gfx/models.js`). **See [CREDITS.md](CREDITS.md) for every asset, its author and its licence.**
 
 **Procedural textures.** The armour, metal, energy dome, grass tufts and particle sprites are generated at runtime (`js/gfx/tex.js`).
 

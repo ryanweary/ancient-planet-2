@@ -61,9 +61,9 @@ Animated, skinned enemy models. Source: https://quaternius.com, downloaded via h
 
 | File | Original model |
 | --- | --- |
-| `e_rust_grunt.glb` | Robot Enemy |
-| `e_rust_brute.glb` | Robot Enemy Large |
-| `e_rust_tank.glb` | Robot Enemy Large Gun (also used for the Warlord boss) |
+| `e_rust_grunt.glb` | Robot Enemy (Rustborn Mender) |
+| `e_rust_brute.glb` | Robot Enemy Large (Rustborn Hive Carrier) |
+| `e_rust_tank.glb` | Robot Enemy Large Gun (Rustborn Bulwark) |
 | `e_rust_flyer.glb` | Robot Enemy Flying Gun |
 | `e_spider.glb` | Spider |
 | `e_glim_tank.glb` | Crab Enemy |
@@ -71,7 +71,22 @@ Animated, skinned enemy models. Source: https://quaternius.com, downloaded via h
 | `e_glim_flyer.glb` | Glub Evolved |
 | `e_glim_boss.glb` | Dragon Evolved |
 
-The materials are replaced at runtime with the game's rust-armour and glim-crystal PBR palettes, including emissive eyes and a fresnel rim.
+| `e_glim_flyer.glb` is also the Glimmerkin Mender. | |
+
+**Animated Mech Pack (March 2021)** and **Animated Monster Pack**, by Quaternius, CC0 1.0. Source: https://opengameart.org/content/animated-mech-pack and https://opengameart.org/content/lowpoly-animated-monsters, taken from the CC0 mirror at https://github.com/zuujis-cc0/opengameart-quaternius-3d-art. Converted from FBX with three.js (FBXLoader to GLTFExporter), trimmed to the walk/run/death clips, then meshopt-compressed with 512 px WebP textures. The mech textures were repainted from teal/green to Rustborn red-orange.
+
+| File | Original model | Used as |
+| --- | --- | --- |
+| `e_mech_leela.glb` | Leela | Rustborn Trooper, Wraith |
+| `e_mech_stan.glb` | Stan | Rustborn Crawler Tank |
+| `e_mech_george.glb` | George | Rustborn Juggernaut |
+| `e_mech_mike.glb` | Mike | Rustborn Warlord |
+| `e_mon_slime.glb` | Slime | Glimmerkin Trooper |
+| `e_mon_skeleton.glb` | Skeleton | Glimmerkin Wraith |
+| `e_mon_bat.glb` | Bat | Glimmerkin Glider |
+| `e_mon_dragon.glb` | Dragon | Glimmerkin Hive Carrier |
+
+At runtime, the textured mechs keep their paint and weathering, tinted toward the Rustborn palette. Untextured models are recoloured: rust armour for Rustborn, and for Glimmerkin a crystal ramp that keeps each model's light/dark structure, with an inner glow, a fresnel rim, and glowing crystal shards attached to the spine bone.
 
 ## Libraries
 

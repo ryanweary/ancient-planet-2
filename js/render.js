@@ -1155,6 +1155,8 @@ void main(){
   enemySpecial(e, m, u, gy) {
     const op = e.cloaked ? (e.revealed ? 0.5 : 0.18) : 1;
     if (u.opac !== op && u.mats) { u.opac = op; for (const mt of u.mats) if (mt.transparent) mt.opacity = op; }
+    if (u.shardsG === undefined) u.shardsG = m.getObjectByName('shards') || null;
+    if (u.shardsG) u.shardsG.visible = op > 0.4;
     if (u.cross) { u.cross.position.y = (u.hb.position.y + 0.18) + Math.sin(this.time * 4 + e.id) * 0.05; u.cross.rotation.y = this.time * 2; u.cross.quaternion; }
     if (u.ring) { const k = 0.5 + 0.5 * Math.sin(this.time * 3 + e.id); u.ring.material.opacity = (u.dome ? 0.35 : 0.25) + 0.25 * k; }
     if (u.dome) u.dome.rotation.y = this.time * 0.5;
@@ -1386,7 +1388,7 @@ void main(){
 
 // ---------------- portrait icons (rendered once after init) ----------------
 export function makeIcons(towerKinds, enemyTypes) {
-  const S = 128;
+  const S = window.__iconS || 128;
   const cv = document.createElement('canvas'); cv.width = S; cv.height = S;
   let r;
   try { r = new THREE.WebGLRenderer({ canvas: cv, antialias: true, preserveDrawingBuffer: true, alpha: false }); } catch (e) { return {}; }
@@ -1407,7 +1409,7 @@ export function makeIcons(towerKinds, enemyTypes) {
   for (const [type, race] of enemyTypes) {
     const m = enemyMesh(type, race); if (m.userData.mixer) m.userData.mixer.update(0.35); if (m.userData.hb) m.userData.hb.visible = false; if (m.userData.sh) m.userData.sh.visible = false; m.rotation.y = 0.6;
     const big = type === 'boss' ? 2.4 : type === 'brute' || type === 'splitter' ? 1.6 : type === 'tank' || type === 'shield' ? 1.3 : 1;
-    out['e_' + type + '_' + race] = shot(m, race === 'rust' ? rb : gb, (ENEMIES[type].air ? 0.9 : 0.35) * Math.min(big, 1.6), 1.6 * big);
+    out['e_' + type + '_' + race] = shot(m, race === 'rust' ? rb : gb, ENEMIES[type].air ? 1.95 : 0.35 * Math.min(big, 1.6), (ENEMIES[type].air ? 1.9 : 1.6) * big);   // fliers hover ~0.95 up: aim the camera at them
   }
   r.dispose(); try { r.forceContextLoss(); } catch (e) { }
   return out;

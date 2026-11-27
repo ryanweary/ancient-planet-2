@@ -7,7 +7,7 @@ import { Renderer, makeIcons } from './render.js';
 import { initAudio, sfx, setSfx, setMusic } from './audio.js';
 
 const Q = new URLSearchParams(location.search);
-const BUILD = 'v8';
+const BUILD = 'v9';
 const DBG = { auto: Q.has('auto'), god: Q.has('god'), unlock: Q.has('unlock'), nostory: Q.has('nostory') || Q.has('auto'), speed: +Q.get('speed') || 0, q: +Q.get('q') || 0, nogov: Q.has('nogov'), perf: Q.has('perf'), easy: Q.has('easy') };
 const NL = 40;
 const $ = (s, el = document) => el.querySelector(s);
@@ -963,4 +963,4 @@ else if (Q.get('endless')) startLevel(-1 - Math.max(0, Math.min(7, (+Q.get('endl
 else if (Q.get('screen')) go(Q.get('screen'));
 else showTitle();
 requestAnimationFrame(loop);
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=8').catch(() => { });
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js?v=9').catch(() => { });
